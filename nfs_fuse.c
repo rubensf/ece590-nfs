@@ -30,9 +30,8 @@ static void *nfs_fuse_init(struct fuse_conn_info *conn,
 static int nfs_fuse_getattr(const char *path,
                             struct stat* stbuf,
                             struct fuse_file_info *fi) {
-  printf("DB getattr\n");
+  printf("getattr\n");
   refresh_ssh();
-  printf("passed ssh\n");
 
   memset(stbuf, 0, sizeof(struct stat));
   sftp_attributes attr = sftp_stat(global_sftp, path);
@@ -41,8 +40,6 @@ static int nfs_fuse_getattr(const char *path,
     return -ENOENT;
   }
 
-  stbuf->st_uid  = attr->uid;
-  stbuf->st_gid  = attr->gid;
   stbuf->st_size = attr->size;
   stbuf->st_mode = attr->permissions;
   // TODO Figure out n link?
@@ -51,30 +48,11 @@ static int nfs_fuse_getattr(const char *path,
   return 0;
 }
 
-static int nfs_fuse_readdir(const char *path,
-                            void *buf, fuse_fill_dir_t filler,
-                            off_t offset,
-                            struct fuse_file_info *fi,
-                            enum fuse_readdir_flags flags) {
-  printf("DB readdir\n");
+static int nfs_fuse_mkdir(const char *path,
+                          mode_t mode) {
+  printf("mkdir\n");
   refresh_ssh();
-  printf("passed ssh\n");
-
-  sftp_dir dir = sftp_opendir(global_sftp, path);
-  if (!dir) {
-    fprintf(stderr, "Error! Cannot open directory %s for read.", path);
-    return -ENOENT;
-  }
-
-  printf("trying???\n");
-  sftp_attributes attr;
-  while ((attr = sftp_readdir(global_sftp, dir))) {
-    printf("ATTRIBUTE\nATRIBUTEdsa!@#!@#!@#\n%s\n", attr->name);
-    filler(buf, attr->name, NULL, 0, 0);
-    sftp_attributes_free(attr);
-  }
-
-  return 0;
+  return sftp_mkdir(global_sftp, path, mode);
 }
 
 static int nfs_fuse_read(const char *path,
@@ -82,9 +60,8 @@ static int nfs_fuse_read(const char *path,
                          size_t size,
                          off_t offset,
                          struct fuse_file_info *fi) {
-  printf("DB read\n");
+  printf("read\n");
   refresh_ssh();
-  printf("passed ssh\n");
 
   int access_type = O_RDONLY;
   sftp_file file = sftp_open(global_sftp, path, access_type, 0);
@@ -108,11 +85,62 @@ static int nfs_fuse_read(const char *path,
   return size;
 }
 
+static int nfs_fuse_readdir(const char *path,
+                            void *buf, fuse_fill_dir_t filler,
+                            off_t offset,
+                            struct fuse_file_info *fi,
+                            enum fuse_readdir_flags flags) {
+  printf("readdir\n");
+  refresh_ssh();
+
+  sftp_dir dir = sftp_opendir(global_sftp, path);
+  if (!dir) {
+    fprintf(stderr, "Error! Cannot open directory %s for read.", path);
+    return -ENOENT;
+  }
+
+  sftp_attributes attr;
+  while ((attr = sftp_readdir(global_sftp, dir))) {
+    filler(buf, attr->name, NULL, 0, 0);
+    sftp_attributes_free(attr);
+  }
+
+  return 0;
+}
+
+static int nfs_fuse_rmdir(const char* path) {
+  printf("rmdir\n");
+  refresh_ssh();
+
+  return sftp_rmdir(global_sftp, path);
+}
+
+static int nfs_fuse_write(const char* path,
+                          const char *buf,
+                          size_t size,
+                          off_t offset,
+                          struct fuse_file_info *fi) {
+  printf("write\n");
+  int access_type = O_WRONLY | O_CREAT | O_TRUNC;
+  sftp_file file = sftp_open(global_sftp, path, access_type, S_IRWXU);
+  if (!file) {
+    fprintf(stderr, "Error! Cannot open file %s for write. %d", path, -ENOENT);
+    return 0;
+  }
+
+  sftp_write(file, buf, size);
+  sftp_close(file);
+  return size;
+}
+
 static struct fuse_operations nfs_fuse_oper = {
   .init    = nfs_fuse_init,
   .getattr = nfs_fuse_getattr,
-  .readdir = nfs_fuse_readdir,
+  .mkdir   = nfs_fuse_mkdir,
   .read    = nfs_fuse_read,
+  .readdir = nfs_fuse_readdir,
+  .rmdir   = nfs_fuse_rmdir,
+  .write   = nfs_fuse_write,
 };
 
 int main(int argc, char* argv[]) {

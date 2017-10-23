@@ -8,7 +8,7 @@
 ssh_session make_ssh_connection(const char* user, const char* host) {
   ssh_session ssh_sess = ssh_new();
 
-  int verbosity = SSH_LOG_WARNING;
+  int verbosity = SSH_LOG_NOLOG;
   int nohostkeycheck = 0;
 
   ssh_sess = ssh_new();
