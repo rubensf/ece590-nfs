@@ -1,11 +1,14 @@
 #include <libssh/libssh.h>
+#include <libssh/sftp.h>
 
 #include <stdio.h>
+
+#include "sshlib.h"
 
 ssh_session make_ssh_connection(const char* user, const char* host) {
   ssh_session ssh_sess = ssh_new();
 
-  int verbosity = SSH_LOG_PROTOCOL;
+  int verbosity = SSH_LOG_WARNING;
   int nohostkeycheck = 0;
 
   ssh_sess = ssh_new();
@@ -41,7 +44,21 @@ ssh_session make_ssh_connection(const char* user, const char* host) {
 ssh_channel make_ssh_channel(ssh_session ssh_sess) {
   ssh_channel chann = ssh_channel_new(ssh_sess);
   if (chann == NULL) {
-    fprintf(stderr, "Error! Could not make session.\n");
+    fprintf(stderr, "Error! Could not make ssh channel.\n");
     return NULL;
   }
+}
+
+sftp_session make_sftp_session(ssh_session ssh_sess) {
+  sftp_session sftp_sess = sftp_new(ssh_sess);
+  if (sftp_sess == NULL) {
+    fprintf(stderr, "Error! Could not make sftp session.\n");
+    return NULL;
+  }
+  if (sftp_init(sftp_sess) != SSH_OK) {
+    fprintf(stderr, "Error! Could not init sftp session.\n");
+    return NULL;
+  }
+
+  return sftp_sess;
 }
