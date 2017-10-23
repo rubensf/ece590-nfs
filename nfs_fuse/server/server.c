@@ -1,8 +1,10 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 int main() {
   int welcomeSocket, newSocket;
@@ -26,7 +28,10 @@ int main() {
   memset(serverAddr.sin_zero, '\0', sizeof serverAddr.sin_zero);
 
   /*---- Bind the address struct to the socket ----*/
-  bind(welcomeSocket, (struct sockaddr *) &serverAddr, sizeof(serverAddr));
+  if (bind(welcomeSocket, (struct sockaddr *) &serverAddr, sizeof(serverAddr)) == -1) {
+    fprintf(stderr, "Error!!\n");
+    exit(-1);
+  }
 
   /*---- Listen on the socket, with 5 max connection requests queued ----*/
   if(listen(welcomeSocket,5) == 0)
