@@ -47,6 +47,16 @@ ssh_channel make_ssh_channel(ssh_session ssh_sess) {
     fprintf(stderr, "Error! Could not make ssh channel.\n");
     return NULL;
   }
+  if (ssh_channel_open_session(chann) != SSH_OK) {
+    fprintf(stderr, "Error! Could not start ssh channel.\n");
+    return NULL;
+  }
+  if (ssh_channel_request_shell(chann) != SSH_OK) {
+    fprintf(stderr, "Error! Could not start ssh shell.\n");
+    return NULL;
+  }
+
+  return chann;
 }
 
 sftp_session make_sftp_session(ssh_session ssh_sess) {

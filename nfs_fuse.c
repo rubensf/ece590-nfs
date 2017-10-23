@@ -17,7 +17,15 @@ static void refresh_ssh() {
     sftp_free(global_sftp);
     ssh_free(global_ssh);
     global_ssh = make_ssh_connection("esa02", "10.148.54.36");
+    if (!global_ssh) {
+      fprintf(stderr, "Failed to make SSH connection.");
+      exit(-1);
+    }
     global_sftp = make_sftp_session(global_ssh);
+    if (!global_sftp) {
+      fprintf(stderr, "Failed to make SFTP connection.");
+      exit(-1);
+    }
   }
 }
 
@@ -108,6 +116,26 @@ static int nfs_fuse_readdir(const char *path,
   return 0;
 }
 
+static int nfs_fuse_rename(const char* from,
+                           const char* to,
+                           unsigned int flags) {
+  sftp_rename(global_sftp, from, to);
+
+  // TODO Can't find flags RENAME.
+  /*
+  if (sftp_stat(global_sftp, to) == NULL ||
+      flags == RENAME_NOREPLACE) {
+    sftp_rename(global_sftp, from, to);
+  } else if (flags == RENAME_EXCHANGE) {
+    // TODO This isn't atomic...
+    const char* tmp = "/tmp/tmp1plznocollision";
+    sftp_rename(global_sftp, to, tmp);
+    sftp_rename(global_sftp, from, to);
+    sftp_rename(global_sftp, tmp, from);
+  }
+  */
+}
+
 static int nfs_fuse_rmdir(const char* path) {
   printf("rmdir\n");
   refresh_ssh();
@@ -139,6 +167,7 @@ static struct fuse_operations nfs_fuse_oper = {
   .mkdir   = nfs_fuse_mkdir,
   .read    = nfs_fuse_read,
   .readdir = nfs_fuse_readdir,
+  .rename  = nfs_fuse_rename,
   .rmdir   = nfs_fuse_rmdir,
   .write   = nfs_fuse_write,
 };
