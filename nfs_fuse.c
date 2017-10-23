@@ -143,6 +143,27 @@ static int nfs_fuse_rmdir(const char* path) {
   return sftp_rmdir(global_sftp, path);
 }
 
+static int nfs_fuse_statfs(const char* path,
+                           struct statvfs* stbuf) {
+  printf("statfs\n");
+  refresh_ssh();
+
+  sftp_statvfs_t statvfs = sftp_statvfs(global_sftp, path);
+
+  stbuf->f_bsize   = statvfs->f_bsize;
+  stbuf->f_blocks  = statvfs->f_blocks;
+  stbuf->f_bfree   = statvfs->f_bfree;
+  stbuf->f_bavail  = statvfs->f_bavail;
+  stbuf->f_files   = statvfs->f_files;
+  stbuf->f_ffree   = statvfs->f_ffree;
+  stbuf->f_fsid    = statvfs->f_fsid;
+  stbuf->f_flag    = statvfs->f_flag;
+  stbuf->f_namemax = statvfs->f_namemax;
+  stbuf->f_frsize  = statvfs->f_frsize;
+
+  return 0;
+}
+
 static int nfs_fuse_write(const char* path,
                           const char *buf,
                           size_t size,
@@ -169,6 +190,7 @@ static struct fuse_operations nfs_fuse_oper = {
   .readdir = nfs_fuse_readdir,
   .rename  = nfs_fuse_rename,
   .rmdir   = nfs_fuse_rmdir,
+  .statfs  = nfs_fuse_statfs,
   .write   = nfs_fuse_write,
 };
 
