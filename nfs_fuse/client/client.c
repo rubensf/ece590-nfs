@@ -1,38 +1,42 @@
 #include <stdio.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <libsocket/libinetsocket.h>
 
-int main(){
-  int clientSocket;
-  char buffer[1024];
-  struct sockaddr_in serverAddr;
-  socklen_t addr_size;
+/*
+ * Connect to a transmission_server.c instance
+ * and send a message
+ */
 
-  /*---- Create the socket. The three arguments are: ----*/
-  /* 1) Internet domain 2) Stream socket 3) Default protocol (TCP in this case) */
-  clientSocket = socket(PF_INET, SOCK_STREAM, 0);
-  
-  /*---- Configure settings of the server address struct ----*/
-  /* Address family = Internet */
-  serverAddr.sin_family = AF_INET;
-  /* Set port number, using htons function to use proper byte order */
-  serverAddr.sin_port = htons(2049);
-  /* Set IP address to localhost */
-  serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-  /* Set all bits of the padding field to 0 */
-  memset(serverAddr.sin_zero, '\0', sizeof serverAddr.sin_zero);  
+int main(void)
+{
+  int ret;
+  int sfd;
+  char* buf = "abcde";
 
-  /*---- Connect the socket to the server using the address struct ----*/
-  addr_size = sizeof serverAddr;
-  connect(clientSocket, (struct sockaddr *) &serverAddr, addr_size);
+  ret = sfd = create_inet_stream_socket("127.0.0.1","55555",LIBSOCKET_IPv4,0);
 
-  /*---- Read the message from the server into the buffer ----*/
-  recv(clientSocket, buffer, 1024, 0);
+  if ( ret < 0 )
+  {
+    perror(0);
+    exit(1);
+  }
 
-  /*---- Print the received message ----*/
-  printf("Data received: %s",buffer);   
+  ret = write(sfd,buf,5);
+
+  if ( ret < 0 )
+  {
+    perror(0);
+    exit(1);
+  }
+
+  ret = destroy_inet_socket(sfd);
+
+  if ( ret < 0 )
+  {
+    perror(0);
+    exit(1);
+  }
 
   return 0;
 }
