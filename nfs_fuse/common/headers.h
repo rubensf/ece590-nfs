@@ -7,21 +7,24 @@
 #ifndef NFS_FUSE_HEADERS_H_
 #define NFS_FUSE_HEADERS_H_
 
-#define NFS_FUSE_REQUEST_CREATE   0
-#define NFS_FUSE_REQUEST_CHMOD    1
-#define NFS_FUSE_REQUEST_CHOWN    2
-#define NFS_FUSE_REQUEST_DESTROY  3
-#define NFS_FUSE_REQUEST_GETATTR  4
-#define NFS_FUSE_REQUEST_INIT     5
-#define NFS_FUSE_REQUEST_MKDIR    6
-#define NFS_FUSE_REQUEST_READ     7
-#define NFS_FUSE_REQUEST_READDIR  8
-#define NFS_FUSE_REQUEST_RENAME   9
-#define NFS_FUSE_REQUEST_RMDIR   10
-#define NFS_FUSE_REQUEST_STATVFS 11
-#define NFS_FUSE_REQUEST_UNLINK  12
-#define NFS_FUSE_REQUEST_UTIMENS 13
-#define NFS_FUSE_REQUEST_WRITE   14
+#define NFS_FUSE_REQUEST_CREATE    0
+#define NFS_FUSE_REQUEST_CHMOD     1
+#define NFS_FUSE_REQUEST_CHOWN     2
+#define NFS_FUSE_REQUEST_DESTROY   3
+#define NFS_FUSE_REQUEST_GETATTR   4
+#define NFS_FUSE_REQUEST_INIT      5
+#define NFS_FUSE_REQUEST_MKDIR     6
+#define NFS_FUSE_REQUEST_OPEN      7
+#define NFS_FUSE_REQUEST_READ      8
+#define NFS_FUSE_REQUEST_READDIR   9
+#define NFS_FUSE_REQUEST_RELEASE  10
+#define NFS_FUSE_REQUEST_RENAME   11
+#define NFS_FUSE_REQUEST_RMDIR    12
+#define NFS_FUSE_REQUEST_STATVFS  13
+#define NFS_FUSE_REQUEST_TRUNCATE 14
+#define NFS_FUSE_REQUEST_UNLINK   15
+#define NFS_FUSE_REQUEST_UTIMENS  16
+#define NFS_FUSE_REQUEST_WRITE    17
 
 struct request {
   uint32_t type;
@@ -51,22 +54,37 @@ struct request_read {
   off_t    offset;
 };
 
+struct request_truncate {
+  off_t    offset;
+};
+
 struct request_write {
   size_t   size;
   char     data[0];
 };
 
-typedef struct request        request_t;
-typedef struct request_create request_create_t;
-typedef struct request_chmod  request_chmod_t;
-typedef struct request_chown  request_chown_t;
-typedef struct request_mkdir  request_mkdir_t;
-typedef struct request_read   request_read_t;
-typedef struct request_write  request_write_t;
+typedef struct request          request_t;
+typedef struct request_create   request_create_t;
+typedef struct request_chmod    request_chmod_t;
+typedef struct request_chown    request_chown_t;
+typedef struct request_mkdir    request_mkdir_t;
+typedef struct request_read     request_read_t;
+typedef struct request_truncate request_truncate_t;
+typedef struct request_write    request_write_t;
+
+struct response_create {
+  int ret;
+  int fd;
+};
 
 struct response_getattr {
   int         ret;
   struct stat sb;
+};
+
+struct response_open {
+  int ret;
+  int fd;
 };
 
 struct response_read {
@@ -89,14 +107,22 @@ struct response_readdir {
 };
 
 struct response_statvfs {
-  int ret;
+  int            ret;
   struct statvfs sb;
 };
 
+struct response_write {
+  int    ret;
+  size_t size;
+};
+
+typedef struct response_create        response_create_t;
 typedef struct response_getattr       response_getattr_t;
+typedef struct response_open          response_open_t;
 typedef struct response_read          response_read_t;
 typedef struct response_readdir_entry response_readdir_entry_t;
 typedef struct response_readdir       response_readdir_t;
 typedef struct response_statvfs       response_statvfs_t;
+typedef struct response_write         response_write_t;
 
 #endif /* NFS_FUSE_HEADERS_H_ */

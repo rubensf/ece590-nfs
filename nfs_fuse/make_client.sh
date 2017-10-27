@@ -1,1 +1,3 @@
-gcc client/client.c common/headers.h third_party/log.c/src/log.h third_party/log.c/src/log.c -lsocket -I/usr/local/include/fuse3 -L/usr/local/lib/x86_64-linux-gnu -lfuse3 -lpthread -o build/client -g -O0
+libfuse=`pkg-config fuse --cflags --libs`
+gcc client/client.c common/headers.h third_party/log.c/src/log.h third_party/log.c/src/log.c -lsocket $libfuse -o build/client -g -O0
+
