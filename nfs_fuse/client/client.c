@@ -90,6 +90,12 @@ static int nfs_fuse_chown(const char* path,
   return -ret;
 }
 
+static void nfs_fuse_destroy(void* arg) {
+  log_trace("Fuse Call: Destroy");
+  make_request("", NFS_FUSE_REQUEST_DESTROY);
+  log_trace("End Fuse Call Destroy");
+}
+
 static void* nfs_fuse_init(struct fuse_conn_info* conn) {
   log_trace("Fuse Call: Init");
 
@@ -348,6 +354,7 @@ static struct fuse_operations nfs_fuse_oper = {
   .create   = nfs_fuse_create,
   .chmod    = nfs_fuse_chmod,
   .chown    = nfs_fuse_chown,
+  .destroy  = nfs_fuse_destroy,
   .init     = nfs_fuse_init,
   .getattr  = nfs_fuse_getattr,
   .mkdir    = nfs_fuse_mkdir,

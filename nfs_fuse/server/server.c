@@ -442,6 +442,7 @@ void handle_requests(int cfd) {
       case NFS_FUSE_REQUEST_CHOWN:    handle_request_chown(cfd, complete_path);
         break;
       case NFS_FUSE_REQUEST_DESTROY:  handle_request_destroy(cfd, complete_path);
+                                      return;
         break;
       case NFS_FUSE_REQUEST_GETATTR:  handle_request_getattr(cfd, complete_path);
         break;
