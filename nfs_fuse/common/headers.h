@@ -1,11 +1,11 @@
+#ifndef NFS_FUSE_HEADERS_H_
+#define NFS_FUSE_HEADERS_H_
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
-
-#ifndef NFS_FUSE_HEADERS_H_
-#define NFS_FUSE_HEADERS_H_
 
 #define NFS_FUSE_REQUEST_CREATE    0
 #define NFS_FUSE_REQUEST_CHMOD     1

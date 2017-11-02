@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <libsocket/libinetsocket.h>
 
+#include "cache.h"
 #include "../common/headers.h"
 #include "../third_party/log.c/src/log.h"
 
@@ -99,13 +100,20 @@ static void nfs_fuse_destroy(void* arg) {
 static void* nfs_fuse_init(struct fuse_conn_info* conn) {
   log_trace("Fuse Call: Init");
 
+  // TODO Allow for external IP.
   sfd = create_inet_stream_socket("127.0.0.1", "1111", LIBSOCKET_IPv4, 0);
   if (sfd < 0) {
     log_fatal("Failed to start fuse connection: %s", strerror(errno));
     exit(1);
   }
   log_trace("Socket up and running");
-  log_trace("End Fuse Call Init");
+
+  if (init_cache() == -1) {
+    log_fatal("Could not initialize cache.");
+    exit(1);
+  }
+  log_trace("Cache up and running");
+
   return NULL;
 }
 

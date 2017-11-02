@@ -1,5 +1,12 @@
 # Some Prereqs
-sudo apt-get install -y libfuse-dev git cmake
+sudo apt-get install -y libfuse-dev git cmake redis-server libhiredis-dev
+
+# Configure redis
+sudo echo "maxmemory 128mb" >> /etc/redis/redis.conf
+sudo echo "maxmemory-policy allkeys-lru" >> /etc/redis/redis.conf
+
+sudo systemctl restart redis-server.service
+sudo systemctl enable redis-server.service
 
 # Install libsocket
 git clone https://github.com/dermesser/libsocket.git
@@ -20,3 +27,6 @@ chmod 775 make_client.sh
 bash make_client.sh
 chmod 775 make_server.sh
 bash make_server.sh
+
+cd ../..
+sudo chown -R $USER ece590-nfs
