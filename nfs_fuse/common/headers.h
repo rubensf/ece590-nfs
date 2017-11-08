@@ -72,19 +72,9 @@ typedef struct request_read     request_read_t;
 typedef struct request_truncate request_truncate_t;
 typedef struct request_write    request_write_t;
 
-struct response_create {
-  int ret;
-  int fd;
-};
-
 struct response_getattr {
   int         ret;
   struct stat sb;
-};
-
-struct response_open {
-  int ret;
-  int fd;
 };
 
 struct response_read {
@@ -116,9 +106,7 @@ struct response_write {
   size_t size;
 };
 
-typedef struct response_create        response_create_t;
 typedef struct response_getattr       response_getattr_t;
-typedef struct response_open          response_open_t;
 typedef struct response_read          response_read_t;
 typedef struct response_readdir_entry response_readdir_entry_t;
 typedef struct response_readdir       response_readdir_t;

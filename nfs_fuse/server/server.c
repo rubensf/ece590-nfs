@@ -54,17 +54,15 @@ void handle_request_create(int cfd, char* complete_path) {
   request_create_t req_create;
   read(cfd, &req_create, sizeof(request_create_t));
 
-  response_create_t resp_create;
-  resp_create.fd = creat(complete_path, req_create.mode);
-  if (resp_create.fd == -1) {
-    resp_create.ret = errno;
-    resp_create.fd = 0;
+  int ret = creat(complete_path, req_create.mode);
+  if (ret == -1) {
+    ret = errno;
     log_error("error create %s: %s", complete_path, strerror(errno));
   } else {
-    resp_create.ret = 0;
+    ret = 0;
   }
 
-  write(cfd, &resp_create, sizeof(response_create_t));
+  write(cfd, &ret, sizeof(int));
 
   log_trace("End Handling Create");
 }
@@ -149,16 +147,9 @@ void handle_request_mkdir(int cfd, char* complete_path) {
 void handle_request_open(int cfd, char* complete_path) {
   log_trace("Handling Request: Open %s", complete_path);
 
-  response_open_t resp_open;
-  resp_open.fd = open(complete_path, O_RDONLY | O_WRONLY);
-  if (resp_open.fd == -1) {
-    log_error("Failed to open %s: %s", complete_path, strerror(errno));
-    resp_open.ret = errno;
-    resp_open.fd = 0;
-  }
-
-  resp_open.ret = 0;
-  write(cfd, &resp_open, sizeof(response_open_t));
+  // Every operation opens the file anyway, so no need to open file here.
+  int ret = 0;
+  write(cfd, &ret, sizeof(int));
 
   log_trace("End Handling Open");
 }
@@ -295,11 +286,8 @@ void handle_request_readdir(int cfd, char* complete_path) {
 void handle_request_release(int cfd, char* complete_path) {
   log_trace("Handling Request: Release %s", complete_path);
 
-  int ret = rmdir(complete_path);
-  if (ret != 0) {
-    log_error("Umable to Release %s: %s", complete_path, strerror(errno));
-    ret = errno;
-  }
+  // Every operation opens the file anyway, so no need to open file here.
+  int ret = 0;
   write(cfd, &ret, sizeof(int));
 
   log_trace("End Handling Release");

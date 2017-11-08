@@ -42,16 +42,12 @@ static int nfs_fuse_create(const char* path,
   req_create.mode = mode;
   write(sfd, &req_create, sizeof(request_create_t));
 
-  response_create_t resp_create;
-  read(sfd, &resp_create, sizeof(response_create_t));
-  if (resp_create.ret != 0) {
-    log_error("Fuse Create for %s failed: %s", path, strerror(resp_create.ret));
-  } else {
-    fi->fh = resp_create.fd;
-  }
+  int ret = 0;
+  read(sfd, &ret, sizeof(int));
+  if (ret != 0) log_error("Fuse Create for %s failed: %s", path, strerror(ret));
 
   log_trace("End Fuse Call Create");
-  return -resp_create.ret;
+  return -ret;
 }
 
 static int nfs_fuse_chmod(const char* path,
@@ -159,16 +155,12 @@ static int nfs_fuse_open(const char* path,
 
   make_request(path, NFS_FUSE_REQUEST_OPEN);
 
-  response_open_t resp_open;
-  read(sfd, &resp_open, sizeof(response_open_t));
-  if (resp_open.ret != 0) {
-    log_error("Open for %s failed: %s", path, strerror(resp_open.ret));
-  } else {
-    fi->fh = resp_open.fd;
-  }
+  int ret = 0;
+  read(sfd, &ret, sizeof(int));
+  if (ret != 0) log_error("Fuse Open for %s failed: %s", path, strerror(ret));
 
   log_trace("End Fuse Call Open");
-  return -resp_open.ret;
+  return -ret;
 }
 
 static int nfs_fuse_read(const char* path,
