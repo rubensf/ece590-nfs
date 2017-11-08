@@ -8,13 +8,29 @@
 
 #include "../third_party/log.c/src/log.h"
 
-redisContext* c;
+#define DEFAULT_HOST "127.0.0.1"
+#define DEFAULT_PORT 6379
 
-// TODO Maybe allow non-redis cache.
-int init_cache() {
+#define KILOBYTE 1024
+#define MEGABYTE 1048576
+
+#define STANDARD_CHUNK 4096
+
+// NOTE This doesn't allow for multiple things using the same "library", so
+// possibly make a cache descriptor.
+static redisContext* c;
+size_t chunk_size = STANDARD_CHUNK;
+
+int init_cache(const char* hostname, int port, size_t chunk_size_) {
   log_trace("Configuring Redis");
-  const char* hostname = "127.0.0.1";
-  int port = 6739;
+  if (hostname == NULL)
+    hostname = DEFAULT_HOST;
+  if (port == 0)
+    port = DEFAULT_PORT;
+  if (chunk_size_ != 0)
+    chunk_size = chunk_size_;
+
+  log_debug("Connecting on host: %s, port: %d", hostname, port);
 
   // TODO Fall back to another sort of storage?
   struct timeval timeout = { 1, 500000 }; // 1.5 seconds
@@ -31,34 +47,85 @@ int init_cache() {
   log_trace("End Configuring Redis");
 }
 
+int load_chunk(char* sha1_key, size_t chunk_n, char* chunk_data) {
+  redisReply* reply = redisCommand(c, "hget %b %d", sha1_key, SHA_DIGEST_LENGTH, chunk_n);
+  if (reply == NULL) {
+    log_debug("key-chunk didn't exist");
+    return -1;
+  } else if (reply->type != REDIS_REPLY_STRING || reply->len != chunk_size) {
+    log_error("Redis item was modified by outside sources?");
+    freeReplyObject(reply);
+    return -2;
+  }
+
+  memcpy(chunk_data, reply->str, chunk_size);
+  return 0;
+}
+
 // TODO What if OS reads different offsets ???
 int save_file(char* path, size_t path_l, off_t offset,
-              char* data, size_t size) {
-  // Pray no one will use > as part of the file name.
-  unsigned char key_string[SHA_DIGEST_LENGTH + 1];
+              char* in_data, size_t size) {
+  log_trace("Saving file");
+  unsigned char key_string[SHA_DIGEST_LENGTH];
   SHA1(path, path_l, key_string);
-  key_string[SHA_DIGEST_LENGTH] = '\0';
 
-  /*redisReply* reply = redisCommand(c, "hget %s", key_string);*/
+  size_t chunk_number;
+  off_t curr_off_data = 0;
+  for (chunk_number = offset/chunk_size;
+       chunk_number * chunk_size <= offset + size;
+       chunk_number++) {
+    log_debug("Doing chunk number %ld", chunk_number);
 
-  char offset_str[100], size_str[100];
-  sprintf(offset_str, "%ld", size);
-  sprintf(size_str, "%ld", size);
+    char buff[chunk_size];
+    memset(buff, 0, chunk_size);
 
-  char offset_size[200];
-  offset_size[0] = '\0';
-  strcat(offset_size, offset_str);
-  strcat(offset_size, ":");
-  strcat(offset_size, size_str);
+    // First item of for loop -> might not be writing the entire chunk.
+    // Last item of for loop -> might not be writing the entire chunk.
+    if (chunk_number == (offset/chunk_size) && offset != 0) {
+      int ret = load_chunk(key_string, chunk_number, buff);
 
-  char* data_with_0 = malloc(size + 1);
-  memcpy(data_with_0, data, size);
-  data_with_0[size] = '\0';
+      memcpy(buff + offset, in_data + curr_off_data, chunk_size - offset);
+      curr_off_data += chunk_size - offset;
+    } else if ((chunk_number + 1) * chunk_size > offset + size) {
+      int ret = load_chunk(key_string, chunk_number, buff);
 
-  log_debug("Sending to redis: hmset %s %s %s", key_string, offset_size, data_with_0);
-  redisCommand(c, "hmset %s %s %s", key_string, offset_size, data_with_0);
+      memcpy(buff, in_data + curr_off_data, offset + size - (chunk_number * chunk_size));
+      curr_off_data += offset + size - (chunk_number * chunk_size);
+    } else {
+      memcpy(buff, in_data + curr_off_data, chunk_size);
+      curr_off_data += chunk_size;
+    }
 
-  free(data_with_0);
+    redisReply* reply;
+    reply = redisCommand(c, "hset %b %d %b", key_string, SHA_DIGEST_LENGTH, chunk_number,
+                         buff, chunk_size);
+
+    // Error checking
+    if (reply == NULL || reply->type != REDIS_REPLY_INTEGER || reply->integer != 1)
+      return -1;
+  }
 
   return 0;
 }
+
+int load_file(char* path, size_t path_l, off_t offset,
+              char* out_data, size_t size) {
+  log_trace("Loading file");
+  unsigned char key_string[SHA_DIGEST_LENGTH];
+  SHA1(path, path_l, key_string);
+
+  size_t chunk_number;
+  off_t curr_off_data;
+  for (chunk_number = offset/chunk_size;
+       chunk_number * chunk_size <= offset + size;
+       chunk_number++) {
+    redisReply* reply;
+
+    if (chunk_number == (offset/chunk_size) && offset != 0) {
+      reply = redisCommand(c, "hget %b %d ", key_string, SHA_DIGEST_LENGTH, chunk_number);
+    }
+  }
+
+  return 0;
+}
+
