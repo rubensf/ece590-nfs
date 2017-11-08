@@ -84,8 +84,9 @@ int save_file(char* path, size_t path_l, off_t offset,
     if (chunk_number == (offset/chunk_size) && offset != 0) {
       int ret = load_chunk(key_string, chunk_number, buff);
 
-      memcpy(buff + offset, in_data + curr_off_data, chunk_size - offset);
-      curr_off_data += chunk_size - offset;
+      int chk_off = offset - (chunk_number * chunk_size);
+      memcpy(buff + chk_off, in_data + curr_off_data, chunk_size - chk_off);
+      curr_off_data += chunk_size - chk_off;
     } else if ((chunk_number + 1) * chunk_size > offset + size) {
       int ret = load_chunk(key_string, chunk_number, buff);
 
@@ -101,10 +102,16 @@ int save_file(char* path, size_t path_l, off_t offset,
                          buff, chunk_size);
 
     // Error checking
-    if (reply == NULL || reply->type != REDIS_REPLY_INTEGER || reply->integer != 1)
+    if (reply == NULL) {
       return -1;
+    } else if (reply->type != REDIS_REPLY_INTEGER || reply->integer != 0) {
+      freeReplyObject(reply);
+      return -1;
+    }
+    freeReplyObject(reply);
   }
 
+  log_trace("End save file");
   return 0;
 }
 
@@ -115,17 +122,31 @@ int load_file(char* path, size_t path_l, off_t offset,
   SHA1(path, path_l, key_string);
 
   size_t chunk_number;
-  off_t curr_off_data;
+  off_t curr_off_data = 0;
   for (chunk_number = offset/chunk_size;
        chunk_number * chunk_size <= offset + size;
        chunk_number++) {
-    redisReply* reply;
+    char buff[chunk_size];
+    int ret = load_chunk(key_string, chunk_number, buff);
+    if (ret != 0)
+      return -1;
 
+    // First item of for loop -> might not be writing the entire chunk.
+    // Last item of for loop -> might not be writing the entire chunk.
     if (chunk_number == (offset/chunk_size) && offset != 0) {
-      reply = redisCommand(c, "hget %b %d ", key_string, SHA_DIGEST_LENGTH, chunk_number);
+      int chk_off = offset - (chunk_number * chunk_size);
+      memcpy(out_data + curr_off_data, buff + chk_off, chunk_size - chk_off);
+      curr_off_data += chunk_size - chk_off;
+    } else if ((chunk_number + 1) * chunk_size > offset + size) {
+      memcpy(out_data + curr_off_data, buff, offset + size - (chunk_number * chunk_size));
+      curr_off_data += offset + size - (chunk_number * chunk_size);
+    } else {
+      memcpy(out_data, buff, chunk_size);
+      curr_off_data += chunk_size;
     }
   }
 
+  log_trace("End load file");
   return 0;
 }
 

@@ -8,6 +8,10 @@ int main() {
   int ret = save_file("blop", 5, 0, "gaballllll", 10);
   printf("my ret %d\n", ret);
 
+  char data[10];
+  load_file("blop", 5, 0, data, 10);
+
+  printf("%s\n", data);
 
   return 0;
 }
