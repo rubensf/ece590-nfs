@@ -18,6 +18,9 @@
 char* nfs_root_path;
 int nfs_root_path_l;
 
+// Forward declare for use by _create.
+void handle_request_getattr(int cfd, char* complete_path);
+
 char* make_complete_path(char* added_path, int len) {
   log_trace("Appending |%s| (%d) %s", nfs_root_path, len, added_path);
   char* complete_path = malloc(nfs_root_path_l + len + 1);
@@ -48,6 +51,25 @@ request_t* read_request(int cfd) {
   return req_ptr;
 }
 
+// NON FUSE FUNCTION
+void handle_request_timestamp(int cfd, char* complete_path) {
+  log_trace("Handling Request: Normal timestamp query");
+
+  response_timestamp_t resp;
+  struct stat sb;
+  resp.ret = stat(complete_path, &sb);
+
+  if (resp.ret == 0) {
+    resp.stamp = sb.st_mtim;
+  } else {
+    resp.ret = errno;
+    log_error("Failed to get timestamp for %s: %s", complete_path, strerror(errno));
+  }
+
+  write(cfd, &resp, sizeof(response_timestamp_t));
+  log_trace("End Handling Timestamp");
+}
+
 void handle_request_create(int cfd, char* complete_path) {
   log_trace("Handling Request: Create %s", complete_path);
 
@@ -56,13 +78,15 @@ void handle_request_create(int cfd, char* complete_path) {
 
   int ret = creat(complete_path, req_create.mode);
   if (ret == -1) {
-    ret = errno;
     log_error("error create %s: %s", complete_path, strerror(errno));
-  } else {
-    ret = 0;
-  }
 
-  write(cfd, &ret, sizeof(int));
+    response_timestamp_t resp;
+    resp.ret = errno;
+    write(cfd, &resp, sizeof(response_timestamp_t));
+  } else {
+    log_trace("Create successful -- re-routing to getattr");
+    handle_request_timestamp(cfd, complete_path);
+  }
 
   log_trace("End Handling Create");
 }
@@ -114,11 +138,12 @@ void handle_request_getattr(int cfd, char* complete_path) {
   resp_getattr.ret = stat(complete_path, &resp_getattr.sb);
 
   if (resp_getattr.ret == 0) {
-    log_trace("Stats for %s: %d %d %d",
+    log_trace("Stats for %s: %d %d %d (ret %d)",
         complete_path,
         resp_getattr.sb.st_uid,
         resp_getattr.sb.st_gid,
-        resp_getattr.sb.st_size);
+        resp_getattr.sb.st_size,
+        resp_getattr.ret);
   } else {
     resp_getattr.ret = errno;
     log_error("Failed to get stat for %s: %s", complete_path, strerror(errno));
@@ -147,9 +172,8 @@ void handle_request_mkdir(int cfd, char* complete_path) {
 void handle_request_open(int cfd, char* complete_path) {
   log_trace("Handling Request: Open %s", complete_path);
 
-  // Every operation opens the file anyway, so no need to open file here.
-  int ret = 0;
-  write(cfd, &ret, sizeof(int));
+  log_trace("Open -> We do get time stamp");
+  handle_request_timestamp(cfd, complete_path);
 
   log_trace("End Handling Open");
 }
@@ -161,6 +185,14 @@ void handle_request_read(int cfd, char* complete_path) {
 
   int open_flags = O_RDONLY;
   int fd = open(complete_path, open_flags);
+  if (fd == -1) {
+    log_error("Couldn't open file %s: %s", complete_path, strerror(errno));
+    response_read_t resp_read;
+    resp_read.ret = errno;
+    resp_read.size = 0;
+    write(cfd, &resp_read, sizeof(response_read_t));
+    return;
+  }
 
   struct stat sb;
   if (fstat(fd, &sb) == -1) {
@@ -187,7 +219,7 @@ void handle_request_read(int cfd, char* complete_path) {
 
     if (read(fd, resp_read->data, resp_read->size) != 0) {
       resp_read->ret = errno;
-      log_error("Read %s failed: %s", complete_path, strerror(errno));
+      log_error("Read %s failed (%d): %s", resp_read->ret, complete_path, strerror(errno));
     }
 
     write(cfd, resp_read, resp_l);
@@ -455,6 +487,8 @@ void handle_requests(int cfd) {
       case NFS_FUSE_REQUEST_UTIMENS:  handle_request_utimens(cfd, complete_path);
         break;
       case NFS_FUSE_REQUEST_WRITE:    handle_request_write(cfd, complete_path);
+        break;
+      case NFS_REQUEST_TIMESTAMP:     handle_request_timestamp(cfd, complete_path);
         break;
       default:
         log_error("Invalid request type or not properly formatted.");

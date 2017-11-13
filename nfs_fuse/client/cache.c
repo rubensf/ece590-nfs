@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "cache.h"
 
@@ -15,6 +16,8 @@
 #define MEGABYTE 1048576
 
 #define STANDARD_CHUNK 4096
+
+#define TIMESPEC_FIELD_NAME "last_modify"
 
 // NOTE This doesn't allow for multiple things using the same "library", so
 // possibly make a cache descriptor.
@@ -40,15 +43,17 @@ int init_cache(const char* hostname, int port, size_t chunk_size_) {
       log_error("Cache: Redis Connection error: %s\n", c->errstr);
       redisFree(c);
     } else {
-      log_error("Cache: Redis Connection error: can't allocate redis context\n");
+      log_error("Cache: Redis Connection error: can't alloc redis context\n");
     }
     return -1;
   }
+  return clear_cache();
   log_trace("End Configuring Redis");
 }
 
-int load_chunk(char* sha1_key, size_t chunk_n, char* chunk_data) {
-  redisReply* reply = redisCommand(c, "hget %b %d", sha1_key, SHA_DIGEST_LENGTH, chunk_n);
+static int load_chunk(char* sha1_key, size_t chunk_n, char* chunk_data) {
+  redisReply* reply =
+      redisCommand(c, "hget %b %d", sha1_key, SHA_DIGEST_LENGTH, chunk_n);
   if (reply == NULL) {
     log_debug("key-chunk didn't exist");
     return -1;
@@ -62,12 +67,62 @@ int load_chunk(char* sha1_key, size_t chunk_n, char* chunk_data) {
   return 0;
 }
 
-// TODO What if OS reads different offsets ???
+static int load_timespec(char* sha1_key, struct timespec* out) {
+  redisReply* reply =
+      redisCommand(c, "hget %b %d",
+                   sha1_key,
+                   SHA_DIGEST_LENGTH,
+                   TIMESPEC_FIELD_NAME);
+  if (reply == NULL) {
+    log_error("timespec wasn't set");
+    return -1;
+  } else if (reply->type != REDIS_REPLY_STRING || reply->len != chunk_size) {
+    log_error("Redis item was modified by outside sources?");
+    freeReplyObject(reply);
+    return -2;
+  }
+
+  memcpy(out, reply->str, sizeof(struct timespec));
+  return 0;
+}
+
+int clear_cache() {
+  redisReply* reply = redisCommand(c, "FLUSHALL");
+  int ret;
+  if (reply == NULL) {
+    log_error("Didn't get a reply from redis - is it connected?");
+    ret = -1;
+  } else if (reply->type != REDIS_REPLY_STATUS) {
+    log_error("Redis behaved in an unknown way.");
+    ret = -1;
+  } else {
+    ret = reply->integer;
+  }
+
+  freeReplyObject(reply);
+  return ret;
+}
+
+int load_last_modify(char* path, size_t path_l, off_t offset,
+                     struct timespec* out) {
+  log_trace("Loading last modification");
+  unsigned char key_string[SHA_DIGEST_LENGTH];
+  SHA1(path, path_l, key_string);
+  return load_timespec(key_string, out);
+}
+
 int save_file(char* path, size_t path_l, off_t offset,
-              char* in_data, size_t size) {
+              char* in_data, size_t size, struct timespec last_m) {
   log_trace("Saving file");
   unsigned char key_string[SHA_DIGEST_LENGTH];
   SHA1(path, path_l, key_string);
+
+  redisReply* tmReply =
+      redisCommand(c, "hset %b %s %b",
+                   key_string, SHA_DIGEST_LENGTH, TIMESPEC_FIELD_NAME,
+                   &last_m, sizeof(struct timespec));
+  // TODO Do we need error checking here?
+  freeReplyObject(tmReply);
 
   size_t chunk_number;
   off_t curr_off_data = 0;

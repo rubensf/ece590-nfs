@@ -26,6 +26,8 @@
 #define NFS_FUSE_REQUEST_UTIMENS  16
 #define NFS_FUSE_REQUEST_WRITE    17
 
+#define NFS_REQUEST_TIMESTAMP     32
+
 struct request {
   uint32_t type;
   uint32_t path_l;
@@ -106,11 +108,17 @@ struct response_write {
   size_t size;
 };
 
+struct response_timestamp {
+  int             ret;
+  struct timespec stamp;
+};
+
 typedef struct response_getattr       response_getattr_t;
 typedef struct response_read          response_read_t;
 typedef struct response_readdir_entry response_readdir_entry_t;
 typedef struct response_readdir       response_readdir_t;
 typedef struct response_statvfs       response_statvfs_t;
 typedef struct response_write         response_write_t;
+typedef struct response_timestamp     response_timestamp_t;
 
 #endif /* NFS_FUSE_HEADERS_H_ */

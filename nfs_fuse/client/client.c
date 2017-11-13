@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <libsocket/libinetsocket.h>
 
@@ -31,6 +32,17 @@ void make_request(const char* path, int req_type) {
   free(req);
 }
 
+static int nfs_check_timestamp(const char* path) {
+  log_trace("NFS Call: Checking timestamp for %s", path);
+
+  make_request(path, NFS_REQUEST_TIMESTAMP);
+
+  response_timestamp_t timest;
+
+
+  log_trace("End NFS Check timestamp call");
+}
+
 static int nfs_fuse_create(const char* path,
                            mode_t mode,
                            struct fuse_file_info* fi) {
@@ -42,12 +54,19 @@ static int nfs_fuse_create(const char* path,
   req_create.mode = mode;
   write(sfd, &req_create, sizeof(request_create_t));
 
-  int ret = 0;
-  read(sfd, &ret, sizeof(int));
-  if (ret != 0) log_error("Fuse Create for %s failed: %s", path, strerror(ret));
+  response_timestamp_t resp;
+  read(sfd, &resp, sizeof(response_timestamp_t));
+  if (resp.ret != 0)
+    log_error("Fuse Create (timestamp) for %s failed: %s",
+              path, strerror(resp.ret));
+
+  // Save last modify timespec for later use.
+  struct timespec* last_m = malloc(sizeof(struct timespec));
+  *last_m = resp.stamp;
+  fi->fh = (uint64_t) last_m;
 
   log_trace("End Fuse Call Create");
-  return -ret;
+  return -resp.ret;
 }
 
 static int nfs_fuse_chmod(const char* path,
@@ -104,7 +123,7 @@ static void* nfs_fuse_init(struct fuse_conn_info* conn) {
   }
   log_trace("Socket up and running");
 
-  if (init_cache() == -1) {
+  if (init_cache(NULL, 0, 0) == -1) {
     log_fatal("Could not initialize cache.");
     exit(1);
   }
@@ -155,12 +174,19 @@ static int nfs_fuse_open(const char* path,
 
   make_request(path, NFS_FUSE_REQUEST_OPEN);
 
-  int ret = 0;
-  read(sfd, &ret, sizeof(int));
-  if (ret != 0) log_error("Fuse Open for %s failed: %s", path, strerror(ret));
+  response_timestamp_t resp;
+  read(sfd, &resp, sizeof(response_timestamp_t));
+  if (resp.ret != 0)
+    log_error("Fuse Open (timestamp) for %s failed: %s",
+              path, strerror(resp.ret));
+
+  // Save last modify timespec for later use.
+  struct timespec* last_m = malloc(sizeof(struct timespec));
+  *last_m = resp.stamp;
+  fi->fh = (uint64_t) last_m;
 
   log_trace("End Fuse Call Open");
-  return -ret;
+  return -resp.ret;
 }
 
 static int nfs_fuse_read(const char* path,
@@ -229,10 +255,12 @@ static int nfs_fuse_readdir(const char* path,
   return -resp.ret;
 }
 
-// TODO Debug: Not sure if it should work like this...
 static int nfs_fuse_release(const char* path,
                             struct fuse_file_info* fi) {
   log_trace("Fuse Call: Release %s", path);
+
+  // No need to keep last_modify anymore.
+  free((struct timespec *) fi->fh);
 
   make_request(path, NFS_FUSE_REQUEST_RELEASE);
 
@@ -352,22 +380,22 @@ static int nfs_fuse_write(const char* path,
 
 static struct fuse_operations nfs_fuse_oper = {
   .create   = nfs_fuse_create,
-  .chmod    = nfs_fuse_chmod,
-  .chown    = nfs_fuse_chown,
+  .chmod    = nfs_fuse_chmod,   // Performs write lol
+  .chown    = nfs_fuse_chown,   // Performs write lol
   .destroy  = nfs_fuse_destroy,
   .init     = nfs_fuse_init,
   .getattr  = nfs_fuse_getattr,
-  .mkdir    = nfs_fuse_mkdir,
+  .mkdir    = nfs_fuse_mkdir,    // I guess performs write ?
   .open     = nfs_fuse_open,
   .read     = nfs_fuse_read,
   .readdir  = nfs_fuse_readdir,
   .release  = nfs_fuse_release,
-  .rmdir    = nfs_fuse_rmdir,
+  .rmdir    = nfs_fuse_rmdir,    // Performs write
   .statfs   = nfs_fuse_statfs,
-  .truncate = nfs_fuse_truncate,
-  .unlink   = nfs_fuse_unlink,
-  .utimens  = nfs_fuse_utimens,
-  .write    = nfs_fuse_write,
+  .truncate = nfs_fuse_truncate, // Performs write
+  .unlink   = nfs_fuse_unlink,   // Performs write
+  .utimens  = nfs_fuse_utimens,  // Performs write
+  .write    = nfs_fuse_write,    // Performs write
 };
 
 int main(int argc, char* argv[]) {
