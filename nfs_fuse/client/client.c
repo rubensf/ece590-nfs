@@ -14,7 +14,13 @@
 #include "../common/headers.h"
 #include "../third_party/log.c/src/log.h"
 
-int sfd;
+#define CACHE_ENABLED_DEFAULT 1
+
+#define NFS_CLIENT_MIN(a, b) ((a) < (b)) ? (a) : (b)
+
+static int sfd;
+static int cache_enabled = CACHE_ENABLED_DEFAULT;
+static int cache_chunk_size = 0;
 
 void make_request(const char* path, int req_type) {
   log_trace("Making a request (code %d) for %s", req_type, path);
@@ -32,17 +38,6 @@ void make_request(const char* path, int req_type) {
   free(req);
 }
 
-static int nfs_check_timestamp(const char* path) {
-  log_trace("NFS Call: Checking timestamp for %s", path);
-
-  make_request(path, NFS_REQUEST_TIMESTAMP);
-
-  response_timestamp_t timest;
-
-
-  log_trace("End NFS Check timestamp call");
-}
-
 static int nfs_fuse_create(const char* path,
                            mode_t mode,
                            struct fuse_file_info* fi) {
@@ -50,20 +45,23 @@ static int nfs_fuse_create(const char* path,
 
   make_request(path, NFS_FUSE_REQUEST_CREATE);
 
-  request_create_t req_create;
-  req_create.mode = mode;
-  write(sfd, &req_create, sizeof(request_create_t));
+  request_create_t req;
+  req.mode = mode;
+  req.cache_enabled = cache_enabled;
+  write(sfd, &req, sizeof(request_create_t));
 
-  response_timestamp_t resp;
-  read(sfd, &resp, sizeof(response_timestamp_t));
-  if (resp.ret != 0)
-    log_error("Fuse Create (timestamp) for %s failed: %s",
-              path, strerror(resp.ret));
+  response_create_t resp;
+  read(sfd, &resp, sizeof(response_create_t));
 
-  // Save last modify timespec for later use.
-  struct timespec* last_m = malloc(sizeof(struct timespec));
-  *last_m = resp.stamp;
-  fi->fh = (uint64_t) last_m;
+  int ret = resp.ret;
+  if (resp.ret != 0) {
+    log_error("Fuse Create for %s failed: %s", path, strerror(resp.ret));
+    ret = -resp.ret;
+  } else if (cache_enabled) {
+    remove_file(path);
+    if (save_metadata(path, O_CREAT | O_WRONLY | O_TRUNC, resp.sb) == -1)
+      log_error("Couldn't save metadata for %s", path);
+  }
 
   log_trace("End Fuse Call Create");
   return -resp.ret;
@@ -127,6 +125,7 @@ static void* nfs_fuse_init(struct fuse_conn_info* conn) {
     log_fatal("Could not initialize cache.");
     exit(1);
   }
+  cache_chunk_size = get_chunk_size();
   log_trace("Cache up and running");
 
   return NULL;
@@ -136,18 +135,30 @@ static int nfs_fuse_getattr(const char* path,
                             struct stat* stbuf) {
   log_trace("Fuse Call: Getattr %s", path);
 
-  make_request(path, NFS_FUSE_REQUEST_GETATTR);
+  int ret = 0;
+  if (cache_enabled) {
+    mode_t mode;
+    ret = load_metadata(path, &mode, stbuf);
+  }
 
-  response_getattr_t resp;
-  read(sfd, &resp, sizeof(response_getattr_t));
+  // TODO Save just stats buffer to cache? If we never opened the file...
+  if (!cache_enabled || ret != 0) {
+    make_request(path, NFS_FUSE_REQUEST_GETATTR);
 
-  if (resp.ret != 0) 
-    log_error("Fuse Getattr for %s failed: %s", path, strerror(resp.ret));
+    response_getattr_t resp;
+    read(sfd, &resp, sizeof(response_getattr_t));
 
-  memcpy(stbuf, &resp.sb, sizeof(struct stat));
+    if (resp.ret != 0) {
+      ret = -resp.ret;
+      log_error("Fuse Getattr for %s failed: %s", path, strerror(resp.ret));
+    } else {
+      ret = 0;
+      memcpy(stbuf, &resp.sb, sizeof(struct stat));
+    }
+  }
 
   log_trace("End Fuse Call Getattr");
-  return -resp.ret;
+  return ret;
 }
 
 static int nfs_fuse_mkdir(const char* path,
@@ -174,19 +185,41 @@ static int nfs_fuse_open(const char* path,
 
   make_request(path, NFS_FUSE_REQUEST_OPEN);
 
-  response_timestamp_t resp;
-  read(sfd, &resp, sizeof(response_timestamp_t));
-  if (resp.ret != 0)
-    log_error("Fuse Open (timestamp) for %s failed: %s",
-              path, strerror(resp.ret));
+  request_open_t req;
+  req.flags = fi->flags;
+  req.cache_enabled = cache_enabled;
+  write(sfd, &req, sizeof(request_open_t));
 
-  // Save last modify timespec for later use.
-  struct timespec* last_m = malloc(sizeof(struct timespec));
-  *last_m = resp.stamp;
-  fi->fh = (uint64_t) last_m;
+  response_open_t resp;
+  read(sfd, &resp, sizeof(response_open_t));
+
+  int ret = resp.ret;
+  if (resp.ret != 0) {
+    log_error("Fuse Open for %s failed: %s", path, strerror(resp.ret));
+    ret = -resp.ret;
+  } else if (cache_enabled) {
+    int flags;
+    struct stat sb;
+    if (load_metadata(path, &flags, &sb) != 0) {
+      // TODO Support multiple open files on same client by using file handles.
+      // Trick: just merge open flags so both opens work.
+      req.flags |= flags;
+      if (req.flags & O_RDWR ||
+          (req.flags & O_RDONLY && req.flags & O_WRONLY)) {
+        req.flags &= (O_RDONLY ^ 1) && (O_WRONLY ^ 1);
+        req.flags |= O_RDWR;
+      }
+
+      // Invalidate cache if it was modified by other sources.
+      if (memcmp(&sb.st_mtim, &resp.sb.st_mtim, sizeof(struct timespec)) != 0)
+        remove_file(path);
+    }
+
+    save_metadata(path, req.flags, resp.sb);
+  }
 
   log_trace("End Fuse Call Open");
-  return -resp.ret;
+  return ret;
 }
 
 static int nfs_fuse_read(const char* path,
@@ -196,27 +229,83 @@ static int nfs_fuse_read(const char* path,
                          struct fuse_file_info* fi) {
   log_trace("Fuse Call: Read %s", path);
 
-  make_request(path, NFS_FUSE_REQUEST_READ);
+  int ret;
+  int open_flags;
+  struct stat sb;
+  // First check if file is in cache
+  if (cache_enabled) {
+    ret = load_metadata(path, &open_flags, &sb);
+    if (ret == 0) {
+      if (!((open_flags & O_RDONLY) ||
+            (open_flags & O_RDWR)))
+        return -EBADF;
 
-  request_read_t req_read;
-  req_read.size = size;
-  req_read.offset = offset;
-  write(sfd, &req_read, sizeof(request_read_t));
+      ret = load_file(path, offset, size, buf);
+      if (ret != 0)
+        log_error("Failed to read from cache.");
+    }
 
-  response_read_t resp_read;
-  read(sfd, &resp_read, sizeof(resp_read));
-  if (resp_read.ret != 0) {
-    log_error("Read for %s failed: %s", path, strerror(errno));
+    if (ret != 0) {
+      off_t first_off = (offset/cache_chunk_size) * cache_chunk_size;
+      off_t final_off =
+          (((offset + size - 1)/cache_chunk_size) + 1) * cache_chunk_size;
+      size_t tot_read = final_off - first_off;
+      log_debug("Reading with cache from %lu to %lu", first_off, final_off);
 
-    log_trace("End Fuse Call Read");
-    return -resp_read.ret;
+      make_request(path, NFS_FUSE_REQUEST_READ);
+
+      request_read_t req_read;
+      req_read.size = tot_read;
+      req_read.offset = first_off;
+      write(sfd, &req_read, sizeof(request_read_t));
+
+      response_read_t resp_read;
+      read(sfd, &resp_read, sizeof(resp_read));
+      if (resp_read.ret != 0) {
+        log_error("Read for %s failed: %s", path, strerror(errno));
+        ret = -resp_read.ret;
+      } else {
+        ret = resp_read.size;
+        log_trace("Read %lu bytes", resp_read.size);
+        char* retbuf = malloc(resp_read.size);
+        read(sfd, retbuf, resp_read.size);
+
+        save_file(path, first_off, resp_read.size, buf);
+
+        size_t read_from_requested =
+          NFS_CLIENT_MIN(first_off + resp_read.size - offset, size);
+        if (read_from_requested < 0)
+          read_from_requested = 0;
+
+        memcpy(buf,
+               retbuf + offset - first_off,
+               read_from_requested);
+        ret = read_from_requested;
+        log_debug("With cache: read %lu", read_from_requested);
+      }
+    }
   } else {
-    log_trace("Read %lu bytes", resp_read.size);
-    read(sfd, buf, resp_read.size);
+    make_request(path, NFS_FUSE_REQUEST_READ);
 
-    log_trace("End Fuse Call Read");
-    return resp_read.size;
+    request_read_t req_read;
+    req_read.size = size;
+    req_read.offset = offset;
+    write(sfd, &req_read, sizeof(request_read_t));
+
+    response_read_t resp_read;
+    read(sfd, &resp_read, sizeof(resp_read));
+    if (resp_read.ret != 0) {
+      ret = -resp_read.ret;
+      log_error("Read for %s failed: %s", path, strerror(errno));
+    } else {
+      ret = resp_read.size;
+      log_trace("Read %lu bytes", resp_read.size);
+      read(sfd, buf, resp_read.size);
+    }
   }
+
+  log_trace("End Fuse Call Read");
+  return ret;
 }
 
 static int nfs_fuse_readdir(const char* path,
@@ -373,21 +462,40 @@ static int nfs_fuse_write(const char* path,
     ret = resp_write.size;
   }
 
-  log_debug("Write Returning %d", ret);
+  if (cache_enabled) {
+    int flags;
+    struct stat sb;
+    load_metadata(path, &flags, &sb);
+    save_metadata(path, flags, resp_write.sb);
+
+    off_t first_off = (offset/cache_chunk_size) * cache_chunk_size;
+    off_t final_off =
+        NFS_CLIENT_MIN(
+            (((offset + size - 1)/cache_chunk_size) + 1) * cache_chunk_size,
+            offset + resp_write.size);
+    size_t tot_read = final_off - first_off;
+
+    // TODO Optimze for writing chunks in the middle...
+    char* newbuf = malloc(tot_read);
+    load_file(path, first_off, tot_read, newbuf);
+    memcpy(newbuf + offset - first_off, buf, resp_write.size);
+    save_file(path, first_off, tot_read, newbuf);
+  }
+
   log_trace("End Fuse Call Write");
   return ret;
 }
 
 static struct fuse_operations nfs_fuse_oper = {
-  .create   = nfs_fuse_create,
-  .chmod    = nfs_fuse_chmod,   // Performs write lol
-  .chown    = nfs_fuse_chown,   // Performs write lol
+  .create   = nfs_fuse_create, // DONE
+  .chmod    = nfs_fuse_chmod,    // Performs write
+  .chown    = nfs_fuse_chown,    // Performs write
   .destroy  = nfs_fuse_destroy,
   .init     = nfs_fuse_init,
   .getattr  = nfs_fuse_getattr,
-  .mkdir    = nfs_fuse_mkdir,    // I guess performs write ?
-  .open     = nfs_fuse_open,
-  .read     = nfs_fuse_read,
+  .mkdir    = nfs_fuse_mkdir,    // Performs write
+  .open     = nfs_fuse_open,   // DONE
+  .read     = nfs_fuse_read,   // DONE
   .readdir  = nfs_fuse_readdir,
   .release  = nfs_fuse_release,
   .rmdir    = nfs_fuse_rmdir,    // Performs write
@@ -396,6 +504,8 @@ static struct fuse_operations nfs_fuse_oper = {
   .unlink   = nfs_fuse_unlink,   // Performs write
   .utimens  = nfs_fuse_utimens,  // Performs write
   .write    = nfs_fuse_write,    // Performs write
+
+  // .flag_nullpath_ok = 1, // Yay file handles.
 };
 
 int main(int argc, char* argv[]) {

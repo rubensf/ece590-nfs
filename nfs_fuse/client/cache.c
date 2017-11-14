@@ -1,4 +1,5 @@
 #include <hiredis/hiredis.h>
+#include <math.h>
 #include <openssl/sha.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,27 +10,30 @@
 
 #include "../third_party/log.c/src/log.h"
 
-#define DEFAULT_HOST "127.0.0.1"
-#define DEFAULT_PORT 6379
+#define NFS_REDIS_DEFAULT_HOST "127.0.0.1"
+#define NFS_REDIS_DEFAULT_PORT 6379
 
-#define KILOBYTE 1024
-#define MEGABYTE 1048576
+#define NFS_REDIS_KILOBYTE 1024
+#define NFS_REDIS_MEGABYTE 1048576
 
-#define STANDARD_CHUNK 4096
+#define NFS_REDIS_STANDARD_CHUNK 4096
 
-#define TIMESPEC_FIELD_NAME "last_modify"
+#define NFS_REDIS_OPEN_FIELD_NAME "open_flags"
+#define NFS_REDIS_STAT_FIELD_NAME "stats"
+
+#define NFS_REDIS_MIN(a, b) ((a) < (b)) ? (a) : (b)
 
 // NOTE This doesn't allow for multiple things using the same "library", so
 // possibly make a cache descriptor.
 static redisContext* c;
-size_t chunk_size = STANDARD_CHUNK;
+static size_t chunk_size = NFS_REDIS_STANDARD_CHUNK;
 
 int init_cache(const char* hostname, int port, size_t chunk_size_) {
   log_trace("Configuring Redis");
   if (hostname == NULL)
-    hostname = DEFAULT_HOST;
+    hostname = NFS_REDIS_DEFAULT_HOST;
   if (port == 0)
-    port = DEFAULT_PORT;
+    port = NFS_REDIS_DEFAULT_PORT;
   if (chunk_size_ != 0)
     chunk_size = chunk_size_;
 
@@ -51,41 +55,6 @@ int init_cache(const char* hostname, int port, size_t chunk_size_) {
   log_trace("End Configuring Redis");
 }
 
-static int load_chunk(char* sha1_key, size_t chunk_n, char* chunk_data) {
-  redisReply* reply =
-      redisCommand(c, "hget %b %d", sha1_key, SHA_DIGEST_LENGTH, chunk_n);
-  if (reply == NULL) {
-    log_debug("key-chunk didn't exist");
-    return -1;
-  } else if (reply->type != REDIS_REPLY_STRING || reply->len != chunk_size) {
-    log_error("Redis item was modified by outside sources?");
-    freeReplyObject(reply);
-    return -2;
-  }
-
-  memcpy(chunk_data, reply->str, chunk_size);
-  return 0;
-}
-
-static int load_timespec(char* sha1_key, struct timespec* out) {
-  redisReply* reply =
-      redisCommand(c, "hget %b %d",
-                   sha1_key,
-                   SHA_DIGEST_LENGTH,
-                   TIMESPEC_FIELD_NAME);
-  if (reply == NULL) {
-    log_error("timespec wasn't set");
-    return -1;
-  } else if (reply->type != REDIS_REPLY_STRING || reply->len != chunk_size) {
-    log_error("Redis item was modified by outside sources?");
-    freeReplyObject(reply);
-    return -2;
-  }
-
-  memcpy(out, reply->str, sizeof(struct timespec));
-  return 0;
-}
-
 int clear_cache() {
   redisReply* reply = redisCommand(c, "FLUSHALL");
   int ret;
@@ -103,63 +72,160 @@ int clear_cache() {
   return ret;
 }
 
-int load_last_modify(char* path, size_t path_l, off_t offset,
-                     struct timespec* out) {
-  log_trace("Loading last modification");
-  unsigned char key_string[SHA_DIGEST_LENGTH];
-  SHA1(path, path_l, key_string);
-  return load_timespec(key_string, out);
+size_t get_chunk_size() {
+  return chunk_size;
 }
 
-int save_file(char* path, size_t path_l, off_t offset,
-              char* in_data, size_t size, struct timespec last_m) {
-  log_trace("Saving file");
-  unsigned char key_string[SHA_DIGEST_LENGTH];
-  SHA1(path, path_l, key_string);
+static int load_error_check(redisReply* reply, size_t expected_size) {
+  if (reply == NULL) {
+    log_debug("key-chunk didn't exist");
+    return -1;
+  } else if (reply->type != REDIS_REPLY_STRING || reply->len != expected_size) {
+    log_error("Redis item was modified by outside sources? Reply type: %d",
+              reply->type);
+    return -2;
+  }
+  return 0;
+}
 
-  redisReply* tmReply =
-      redisCommand(c, "hset %b %s %b",
-                   key_string, SHA_DIGEST_LENGTH, TIMESPEC_FIELD_NAME,
-                   &last_m, sizeof(struct timespec));
-  // TODO Do we need error checking here?
-  freeReplyObject(tmReply);
+// Field name must be \0 terminated.
+static int load_common(const unsigned char* sha1_key,
+                       char* field_name, off_t offset,
+                       void* out_data, size_t out_size) {
+  redisReply* reply =
+      redisCommand(c, "hget %b %s", sha1_key, SHA_DIGEST_LENGTH, field_name);
+  int ret = load_error_check(reply, out_size);
+  if (ret == 0)
+    memcpy(out_data, reply->str + offset, out_size);
+  freeReplyObject(reply);
+  return ret;
+}
+
+static int load_chunk(const unsigned char* sha1_key,
+                      size_t chunk_n,
+                      char* chunk_data) {
+  log_trace("Reading chunk number %lu", chunk_n);
+  char chunk_n_str[100];
+  sprintf(chunk_n_str, "%lu", chunk_n);
+  return load_common(sha1_key, chunk_n_str, 0, chunk_data, chunk_size);
+}
+
+static int load_chunk_data(const unsigned char* sha1_key,
+                           size_t chunk_n,
+                           char* chunk_data,
+                           off_t offset,
+                           size_t size) {
+  log_trace("Reading chunk number %lu at offset %lu with total %lu",
+            chunk_n, offset, size);
+  char chunk_n_str[100];
+  sprintf(chunk_n_str, "%lu", chunk_n);
+  return load_common(sha1_key, chunk_n_str, offset, chunk_data, size);
+}
+
+static int load_open(const unsigned char* sha1_key,
+                     int* open_flags) {
+  log_trace("Reading Flags of Open");
+  return load_common(sha1_key,
+                     NFS_REDIS_OPEN_FIELD_NAME, 0,
+                     open_flags, sizeof(int));
+}
+
+static int load_stat(const unsigned char* sha1_key,
+                     struct stat* sb) {
+  log_trace("Reading Stats of File");
+  return load_common(sha1_key,
+                     NFS_REDIS_STAT_FIELD_NAME, 0,
+                     sb, sizeof(struct stat));
+}
+
+int save_metadata(const char* path, int open_flags, struct stat sb) {
+  log_trace("Saving metadata");
+
+  unsigned char sha1_key[SHA_DIGEST_LENGTH];
+  SHA1(path, strlen(path), sha1_key);
+
+  redisReply* reply_open =
+      redisCommand(c, "hset %b %s %d", sha1_key, SHA_DIGEST_LENGTH,
+                   NFS_REDIS_OPEN_FIELD_NAME, open_flags);
+  redisReply* reply_stat =
+      redisCommand(c, "hset %b %s %b", sha1_key, SHA_DIGEST_LENGTH,
+                   NFS_REDIS_STAT_FIELD_NAME, &sb, sizeof(struct stat));
+
+  int ret = 0;
+  if (reply_open == NULL || reply_stat == NULL ||
+      reply_open->type != REDIS_REPLY_INTEGER ||
+      reply_stat->type != REDIS_REPLY_INTEGER) {
+    log_error("Saving metadata failed.");
+    ret = -1;
+  }
+
+  freeReplyObject(reply_open);
+  freeReplyObject(reply_stat);
+  return ret;
+}
+
+int load_metadata(const char* path, int* open_flags, struct stat* sb) {
+  log_trace("Loading metadata");
+
+  unsigned char sha1_key[SHA_DIGEST_LENGTH];
+  SHA1(path, strlen(path), sha1_key);
+
+  int ret_open = load_open(sha1_key, open_flags);
+  int ret_stat = load_stat(sha1_key, sb);
+
+  return ret_open || ret_stat;
+}
+
+static int save_error_check(const char* path, off_t offset, size_t size) {
+  struct stat sb;
+  if (load_stat(path, &sb) != 0) {
+    log_error("Metadata should have been saved!");
+    return -1;
+  }
+
+  size_t tot_l = sb.st_size;
+
+  // We can only have a size that isn't a chunk size if this is the last block.
+  if (offset % chunk_size != 0 ||
+      (offset + size - 1 != tot_l && size % chunk_size != 0)) {
+    log_error("Cannot handle data that doesn't fill entire chunks.");
+    return -1;
+  }
+}
+
+int save_file(const char* path, off_t offset, size_t size,
+              const char* in_data) {
+  log_trace("Saving file: %s at offset %lu with size %lu",
+            path, offset, size);
+  if (size == 0)
+    return 0;
+
+  unsigned char sha1_key[SHA_DIGEST_LENGTH];
+  SHA1(path, strlen(path), sha1_key);
+
+  if (save_error_check(sha1_key, offset, size) == -1)
+    return -1;
 
   size_t chunk_number;
-  off_t curr_off_data = 0;
   for (chunk_number = offset/chunk_size;
-       chunk_number * chunk_size <= offset + size;
+       chunk_number * chunk_size <= offset + size - 1;
        chunk_number++) {
     log_debug("Doing chunk number %ld", chunk_number);
 
-    char buff[chunk_size];
-    memset(buff, 0, chunk_size);
+    size_t to_save =
+        NFS_REDIS_MIN(chunk_size, offset + size - 1 - chunk_number * chunk_size);
+    log_debug("Saving %lu bytes at chunk number %lu", to_save, chunk_number);
 
-    // First item of for loop -> might not be writing the entire chunk.
-    // Last item of for loop -> might not be writing the entire chunk.
-    if (chunk_number == (offset/chunk_size) && offset != 0) {
-      int ret = load_chunk(key_string, chunk_number, buff);
-
-      int chk_off = offset - (chunk_number * chunk_size);
-      memcpy(buff + chk_off, in_data + curr_off_data, chunk_size - chk_off);
-      curr_off_data += chunk_size - chk_off;
-    } else if ((chunk_number + 1) * chunk_size > offset + size) {
-      int ret = load_chunk(key_string, chunk_number, buff);
-
-      memcpy(buff, in_data + curr_off_data, offset + size - (chunk_number * chunk_size));
-      curr_off_data += offset + size - (chunk_number * chunk_size);
-    } else {
-      memcpy(buff, in_data + curr_off_data, chunk_size);
-      curr_off_data += chunk_size;
-    }
-
-    redisReply* reply;
-    reply = redisCommand(c, "hset %b %d %b", key_string, SHA_DIGEST_LENGTH, chunk_number,
-                         buff, chunk_size);
+    redisReply* reply =
+        redisCommand(c, "hset %b %d %b",
+                     sha1_key, SHA_DIGEST_LENGTH,
+                     chunk_number,
+                     in_data + chunk_size * chunk_number - offset, to_save);
 
     // Error checking
-    if (reply == NULL) {
-      return -1;
-    } else if (reply->type != REDIS_REPLY_INTEGER || reply->integer != 0) {
+    if (reply == NULL ||
+        reply->type != REDIS_REPLY_INTEGER) {
+      log_error("Redis saving failed. %d %d", reply->type, reply->integer);
       freeReplyObject(reply);
       return -1;
     }
@@ -167,41 +233,66 @@ int save_file(char* path, size_t path_l, off_t offset,
   }
 
   log_trace("End save file");
-  return 0;
+  return size;
 }
 
-int load_file(char* path, size_t path_l, off_t offset,
-              char* out_data, size_t size) {
-  log_trace("Loading file");
-  unsigned char key_string[SHA_DIGEST_LENGTH];
-  SHA1(path, path_l, key_string);
+int load_file(const char* path, off_t offset, size_t size,
+              char* out_data) {
+  log_trace("Loading file: %s at offset %lu with size %lu",
+            path, offset, size);
+  if (size == 0)
+    return 0;
+
+  unsigned char sha1_key[SHA_DIGEST_LENGTH];
+  SHA1(path, strlen(path), sha1_key);
+
+  struct stat sb;
+  if (load_stat(sha1_key, &sb) != 0) {
+    log_error("Metadata should have been saved first!");
+    return -1;
+  }
+
+  size_t max_read = NFS_REDIS_MIN(sb.st_size, offset + size - 1);
 
   size_t chunk_number;
-  off_t curr_off_data = 0;
+  off_t curr_off_data = 0; // It's easier (and faster?) than recalculating at
+                           // every iteration.
   for (chunk_number = offset/chunk_size;
-       chunk_number * chunk_size <= offset + size;
+       chunk_number * chunk_size < max_read;
        chunk_number++) {
-    char buff[chunk_size];
-    int ret = load_chunk(key_string, chunk_number, buff);
-    if (ret != 0)
-      return -1;
+    off_t chk_off =
+        NFS_REDIS_MIN(offset - chunk_number * chunk_size, 0);
+    size_t chk_end =
+        NFS_REDIS_MIN(chunk_size, max_read - chunk_number * chunk_size);
 
-    // First item of for loop -> might not be writing the entire chunk.
-    // Last item of for loop -> might not be writing the entire chunk.
-    if (chunk_number == (offset/chunk_size) && offset != 0) {
-      int chk_off = offset - (chunk_number * chunk_size);
-      memcpy(out_data + curr_off_data, buff + chk_off, chunk_size - chk_off);
-      curr_off_data += chunk_size - chk_off;
-    } else if ((chunk_number + 1) * chunk_size > offset + size) {
-      memcpy(out_data + curr_off_data, buff, offset + size - (chunk_number * chunk_size));
-      curr_off_data += offset + size - (chunk_number * chunk_size);
-    } else {
-      memcpy(out_data, buff, chunk_size);
-      curr_off_data += chunk_size;
+    log_debug("Loading chunk number %lu from bytes %lu to %lu",
+              chunk_number, chk_off, chk_end);
+
+    int ret = load_chunk_data(sha1_key, chunk_number, out_data + curr_off_data,
+                              chk_off, chk_end);
+    if (ret != 0) {
+      log_error("Failed loading chunk number %lu from bytes %lu to %lu",
+                chunk_number, chk_off, chk_end);
+      return -1;
     }
+    curr_off_data += chk_end - chk_off;
   }
 
   log_trace("End load file");
+  return max_read - offset > 0 ? max_read - offset : 0;
+}
+
+int remove_file(const char* path) {
+  unsigned char sha1_key[SHA_DIGEST_LENGTH];
+  SHA1(path, strlen(path), sha1_key);
+
+  redisReply* reply = redisCommand(c, "DEL %b", sha1_key, SHA_DIGEST_LENGTH);
+  if (reply == NULL ||
+      reply->type != REDIS_REPLY_INTEGER ||
+      reply->integer != 1) {
+    return -1;
+  }
+
   return 0;
 }
 

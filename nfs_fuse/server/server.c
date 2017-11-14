@@ -15,12 +15,20 @@
 #include "../common/headers.h"
 #include "../third_party/log.c/src/log.h"
 
-char* nfs_root_path;
-int nfs_root_path_l;
+static char* nfs_root_path;
+static int nfs_root_path_l;
+
+// File descriptor for the connection. It's acquired before the fork so
+// technically each fork can access the connections from other forks, which
+// is kinda bad... But our implementation should really be discarding them
+// so there shouldn't be a way of figuring out the difference :)
+// TODO Ensure this global variable won't create problems.
+static int cfd;
 
 // Forward declare for use by _create.
-void handle_request_getattr(int cfd, char* complete_path);
+void handle_request_getattr(char* complete_path);
 
+// This appends the requested path to the nfs root folder.
 char* make_complete_path(char* added_path, int len) {
   log_trace("Appending |%s| (%d) %s", nfs_root_path, len, added_path);
   char* complete_path = malloc(nfs_root_path_l + len + 1);
@@ -51,47 +59,32 @@ request_t* read_request(int cfd) {
   return req_ptr;
 }
 
-// NON FUSE FUNCTION
-void handle_request_timestamp(int cfd, char* complete_path) {
-  log_trace("Handling Request: Normal timestamp query");
-
-  response_timestamp_t resp;
-  struct stat sb;
-  resp.ret = stat(complete_path, &sb);
-
-  if (resp.ret == 0) {
-    resp.stamp = sb.st_mtim;
-  } else {
-    resp.ret = errno;
-    log_error("Failed to get timestamp for %s: %s", complete_path, strerror(errno));
-  }
-
-  write(cfd, &resp, sizeof(response_timestamp_t));
-  log_trace("End Handling Timestamp");
-}
-
-void handle_request_create(int cfd, char* complete_path) {
+void handle_request_create(char* complete_path) {
   log_trace("Handling Request: Create %s", complete_path);
 
   request_create_t req_create;
   read(cfd, &req_create, sizeof(request_create_t));
 
-  int ret = creat(complete_path, req_create.mode);
-  if (ret == -1) {
-    log_error("error create %s: %s", complete_path, strerror(errno));
+  int fd;
+  response_create_t resp_create;
 
-    response_timestamp_t resp;
-    resp.ret = errno;
-    write(cfd, &resp, sizeof(response_timestamp_t));
-  } else {
-    log_trace("Create successful -- re-routing to getattr");
-    handle_request_timestamp(cfd, complete_path);
+  resp_create.ret = 0;
+  if ((fd = creat(complete_path, req_create.mode)) == -1) {
+    log_error("Couldn't open file %s with flags %x: %s",
+              complete_path, req_create.mode, strerror(errno));
+    resp_create.ret = errno;
+  } else if (fstat(fd, &resp_create.sb) == -1) {
+    log_error("Couldn't get stats for file %s with: %s",
+              complete_path, strerror(errno));
+    resp_create.ret = -ENOENT; // Need to have create errors.
   }
+  close(fd);
 
+  write(cfd, &resp_create, sizeof(response_open_t));
   log_trace("End Handling Create");
 }
 
-void handle_request_chmod(int cfd, char* complete_path) {
+void handle_request_chmod(char* complete_path) {
   log_trace("Handling Request: Chmod %s", complete_path);
 
   request_chmod_t req_mode;
@@ -108,7 +101,7 @@ void handle_request_chmod(int cfd, char* complete_path) {
   log_trace("End Handling Chmod");
 }
 
-void handle_request_chown(int cfd, char* complete_path) {
+void handle_request_chown(char* complete_path) {
   log_trace("Handling Request: Chown %s", complete_path);
 
   request_chown_t req_own;
@@ -125,13 +118,13 @@ void handle_request_chown(int cfd, char* complete_path) {
   log_trace("End Handling Chown");
 }
 
-void handle_request_destroy(int cfd, char* complete_path) {
+void handle_request_destroy(char* complete_path) {
   log_trace("Handling Request: Destroy %s");
   close(cfd);
   log_trace("End Handling Destroy");
 }
 
-void handle_request_getattr(int cfd, char* complete_path) {
+void handle_request_getattr(char* complete_path) {
   log_trace("Handling Request: GetAttr %s", complete_path);
 
   response_getattr_t resp_getattr;
@@ -153,7 +146,7 @@ void handle_request_getattr(int cfd, char* complete_path) {
   log_trace("End Handling GetAttr");
 }
 
-void handle_request_mkdir(int cfd, char* complete_path) {
+void handle_request_mkdir(char* complete_path) {
   log_trace("Handling Request: Mkdir %s", complete_path);
 
   mode_t mode;
@@ -169,16 +162,33 @@ void handle_request_mkdir(int cfd, char* complete_path) {
   log_trace("End Handling Mkdir");
 }
 
-void handle_request_open(int cfd, char* complete_path) {
+void handle_request_open(char* complete_path) {
   log_trace("Handling Request: Open %s", complete_path);
 
-  log_trace("Open -> We do get time stamp");
-  handle_request_timestamp(cfd, complete_path);
+  request_open_t req_open;
+  read(cfd, &req_open, sizeof(request_open_t));
 
+  int fd;
+  response_open_t resp_open;
+
+  resp_open.ret = 0;
+  if ((fd = open(complete_path, req_open.flags)) == -1) {
+    log_error("Couldn't open file %s with flags %x: %s",
+              complete_path, req_open.flags, strerror(errno));
+    resp_open.ret = errno;
+  } else if (fstat(fd, &resp_open.sb) == -1) {
+    log_error("Couldn't get stats for file %s with: %s",
+              complete_path, strerror(errno));
+    resp_open.ret = -ENOENT; // Need to have open errors.
+  }
+  close(fd);
+
+  write(cfd, &resp_open, sizeof(response_open_t));
   log_trace("End Handling Open");
 }
 
-void handle_request_read(int cfd, char* complete_path) {
+// Should only happen on non cached environments.
+void handle_request_read(char* complete_path) {
   log_trace("Handling Request: Read %s", complete_path);
   request_read_t req_read;
   read(cfd, &req_read, sizeof(request_read_t));
@@ -215,11 +225,12 @@ void handle_request_read(int cfd, char* complete_path) {
     size_t resp_l = sizeof(response_read_t) + req_read.size;
     response_read_t* resp_read = malloc(resp_l);
     resp_read->ret = 0;
+    resp_read->stamp = sb.st_mtim;
     resp_read->size = req_read.size;
 
-    if (read(fd, resp_read->data, resp_read->size) != 0) {
+    if (read(fd, resp_read->data, resp_read->size) == -1) {
       resp_read->ret = errno;
-      log_error("Read %s failed (%d): %s", resp_read->ret, complete_path, strerror(errno));
+      log_error("Read %s failed (%d): %s", complete_path, resp_read->ret, strerror(errno));
     }
 
     write(cfd, resp_read, resp_l);
@@ -230,7 +241,7 @@ void handle_request_read(int cfd, char* complete_path) {
   log_trace("End Handling Read %s", complete_path);
 }
 
-void handle_request_readdir(int cfd, char* complete_path) {
+void handle_request_readdir(char* complete_path) {
   log_trace("Handling Request: Read Dir %s", complete_path);
 
   response_readdir_t resp_readdir;
@@ -315,7 +326,7 @@ void handle_request_readdir(int cfd, char* complete_path) {
   log_trace("End Handling Read Dir");
 }
 
-void handle_request_release(int cfd, char* complete_path) {
+void handle_request_release(char* complete_path) {
   log_trace("Handling Request: Release %s", complete_path);
 
   // Every operation opens the file anyway, so no need to open file here.
@@ -325,7 +336,7 @@ void handle_request_release(int cfd, char* complete_path) {
   log_trace("End Handling Release");
 }
 
-void handle_request_rmdir(int cfd, char* complete_path) {
+void handle_request_rmdir(char* complete_path) {
   log_trace("Handling Request: Rmdir %s", complete_path);
 
   int ret = rmdir(complete_path);
@@ -338,7 +349,7 @@ void handle_request_rmdir(int cfd, char* complete_path) {
   log_trace("End Handling Rmdir");
 }
 
-void handle_request_statvfs(int cfd, char* complete_path) {
+void handle_request_statvfs(char* complete_path) {
   log_trace("Handling Request: StatVFS %s", complete_path);
 
   response_statvfs_t resp;
@@ -355,7 +366,7 @@ void handle_request_statvfs(int cfd, char* complete_path) {
   log_trace("End Handling StatVFS");
 }
 
-void handle_request_truncate(int cfd, char* complete_path) {
+void handle_request_truncate(char* complete_path) {
   log_trace("Handling Request: Truncate %s", complete_path);
 
   request_truncate_t req_trunc;
@@ -371,7 +382,7 @@ void handle_request_truncate(int cfd, char* complete_path) {
   log_trace("End Handling Truncate");
 }
 
-void handle_request_unlink(int cfd, char* complete_path) {
+void handle_request_unlink(char* complete_path) {
   log_trace("Handling Request: Unlink %s", complete_path);
 
   int ret = unlink(complete_path);
@@ -384,7 +395,7 @@ void handle_request_unlink(int cfd, char* complete_path) {
   log_trace("End Handling Unlink");
 }
 
-void handle_request_utimens(int cfd, char* complete_path) {
+void handle_request_utimens(char* complete_path) {
   log_trace("Handling Request: Utimens %s", complete_path);
 
   struct timespec tv[2];
@@ -407,7 +418,7 @@ void handle_request_utimens(int cfd, char* complete_path) {
   log_trace("End Handling Utimens");
 }
 
-void handle_request_write(int cfd, char* complete_path) {
+void handle_request_write(char* complete_path) {
   log_trace("Handling Request: Write %s", complete_path);
 
   request_write_t req_write;
@@ -428,15 +439,18 @@ void handle_request_write(int cfd, char* complete_path) {
   } else {
     log_trace("Opened file");
 
+    struct stat sb;
     resp_write.ret = write(fd, data, req_write.size);
-    if (resp_write.ret == -1) {
+    if (resp_write.ret == -1 || fstat(fd, &sb) == -1) {
       log_error("Unable to write file %s: %s",
           complete_path, strerror(errno));
       resp_write.ret  = errno;
       resp_write.size = 0;
     } else {
       log_trace("Wrote to file");
+
       resp_write.size = resp_write.ret;
+      resp_write.sb = sb;
       resp_write.ret = 0;
     }
 
@@ -449,46 +463,44 @@ void handle_request_write(int cfd, char* complete_path) {
   log_trace("End Handling Write");
 }
 
-void handle_requests(int cfd) {
+void handle_requests() {
   while (1) {
     request_t* req = read_request(cfd);
     char* complete_path = make_complete_path(req->path, req->path_l);
 
     switch (req->type) {
-      case NFS_FUSE_REQUEST_CREATE:   handle_request_create(cfd, complete_path);
+      case NFS_FUSE_REQUEST_CREATE:   handle_request_create(complete_path);
         break;
-      case NFS_FUSE_REQUEST_CHMOD:    handle_request_chmod(cfd, complete_path);
+      case NFS_FUSE_REQUEST_CHMOD:    handle_request_chmod(complete_path);
         break;
-      case NFS_FUSE_REQUEST_CHOWN:    handle_request_chown(cfd, complete_path);
+      case NFS_FUSE_REQUEST_CHOWN:    handle_request_chown(complete_path);
         break;
-      case NFS_FUSE_REQUEST_DESTROY:  handle_request_destroy(cfd, complete_path);
+      case NFS_FUSE_REQUEST_DESTROY:  handle_request_destroy(complete_path);
                                       return;
         break;
-      case NFS_FUSE_REQUEST_GETATTR:  handle_request_getattr(cfd, complete_path);
+      case NFS_FUSE_REQUEST_GETATTR:  handle_request_getattr(complete_path);
         break;
-      case NFS_FUSE_REQUEST_MKDIR:    handle_request_mkdir(cfd, complete_path);
+      case NFS_FUSE_REQUEST_MKDIR:    handle_request_mkdir(complete_path);
         break;
-      case NFS_FUSE_REQUEST_OPEN:     handle_request_open(cfd, complete_path);
+      case NFS_FUSE_REQUEST_OPEN:     handle_request_open(complete_path);
         break;
-      case NFS_FUSE_REQUEST_READ:     handle_request_read(cfd, complete_path);
+      case NFS_FUSE_REQUEST_READ:     handle_request_read(complete_path);
         break;
-      case NFS_FUSE_REQUEST_READDIR:  handle_request_readdir(cfd, complete_path);
+      case NFS_FUSE_REQUEST_READDIR:  handle_request_readdir(complete_path);
         break;
-      case NFS_FUSE_REQUEST_RELEASE:  handle_request_release(cfd, complete_path);
+      case NFS_FUSE_REQUEST_RELEASE:  handle_request_release(complete_path);
         break;
-      case NFS_FUSE_REQUEST_RMDIR:    handle_request_rmdir(cfd, complete_path);
+      case NFS_FUSE_REQUEST_RMDIR:    handle_request_rmdir(complete_path);
         break;
-      case NFS_FUSE_REQUEST_STATVFS:  handle_request_statvfs(cfd, complete_path);
+      case NFS_FUSE_REQUEST_STATVFS:  handle_request_statvfs(complete_path);
         break;
-      case NFS_FUSE_REQUEST_TRUNCATE: handle_request_truncate(cfd, complete_path);
+      case NFS_FUSE_REQUEST_TRUNCATE: handle_request_truncate(complete_path);
         break;
-      case NFS_FUSE_REQUEST_UNLINK:   handle_request_unlink(cfd, complete_path);
+      case NFS_FUSE_REQUEST_UNLINK:   handle_request_unlink(complete_path);
         break;
-      case NFS_FUSE_REQUEST_UTIMENS:  handle_request_utimens(cfd, complete_path);
+      case NFS_FUSE_REQUEST_UTIMENS:  handle_request_utimens(complete_path);
         break;
-      case NFS_FUSE_REQUEST_WRITE:    handle_request_write(cfd, complete_path);
-        break;
-      case NFS_REQUEST_TIMESTAMP:     handle_request_timestamp(cfd, complete_path);
+      case NFS_FUSE_REQUEST_WRITE:    handle_request_write(complete_path);
         break;
       default:
         log_error("Invalid request type or not properly formatted.");
@@ -525,7 +537,7 @@ int main(int argc, char* argv[]) {
   log_trace("Socket up and running");
 
   while (1) {
-    int cfd = accept_inet_stream_socket(
+    cfd = accept_inet_stream_socket(
         sfd, src_host, 127, src_port, 6, LIBSOCKET_NUMERIC,0);
     if (cfd == -1) {
       perror("Couldn't accept connection");
@@ -534,7 +546,7 @@ int main(int argc, char* argv[]) {
 
     log_debug("Connection from %s port %s.", src_host, src_port);
     if (fork() == 0) {
-      handle_requests(cfd);
+      handle_requests();
       return 0;
     }
   }

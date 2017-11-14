@@ -26,8 +26,6 @@
 #define NFS_FUSE_REQUEST_UTIMENS  16
 #define NFS_FUSE_REQUEST_WRITE    17
 
-#define NFS_REQUEST_TIMESTAMP     32
-
 struct request {
   uint32_t type;
   uint32_t path_l;
@@ -36,6 +34,7 @@ struct request {
 
 struct request_create {
   mode_t   mode;
+  int      cache_enabled;
 };
 
 struct request_chmod {
@@ -49,6 +48,11 @@ struct request_chown {
 
 struct request_mkdir {
   mode_t   mode;
+};
+
+struct request_open {
+  int      flags;
+  int      cache_enabled;
 };
 
 struct request_read {
@@ -70,17 +74,29 @@ typedef struct request_create   request_create_t;
 typedef struct request_chmod    request_chmod_t;
 typedef struct request_chown    request_chown_t;
 typedef struct request_mkdir    request_mkdir_t;
+typedef struct request_open     request_open_t;
 typedef struct request_read     request_read_t;
 typedef struct request_truncate request_truncate_t;
 typedef struct request_write    request_write_t;
+
+struct response_create {
+  int         ret;
+  struct stat sb;
+};
 
 struct response_getattr {
   int         ret;
   struct stat sb;
 };
 
+struct response_open {
+  int         ret;
+  struct stat sb;
+};
+
 struct response_read {
   int    ret;
+  struct timespec stamp;
   size_t size;
   char   data[0];
 };
@@ -104,21 +120,18 @@ struct response_statvfs {
 };
 
 struct response_write {
-  int    ret;
-  size_t size;
+  int         ret;
+  size_t      size;
+  struct stat sb;
 };
 
-struct response_timestamp {
-  int             ret;
-  struct timespec stamp;
-};
-
+typedef struct response_create        response_create_t;
 typedef struct response_getattr       response_getattr_t;
+typedef struct response_open          response_open_t;
 typedef struct response_read          response_read_t;
 typedef struct response_readdir_entry response_readdir_entry_t;
 typedef struct response_readdir       response_readdir_t;
 typedef struct response_statvfs       response_statvfs_t;
 typedef struct response_write         response_write_t;
-typedef struct response_timestamp     response_timestamp_t;
 
 #endif /* NFS_FUSE_HEADERS_H_ */
