@@ -34,7 +34,6 @@ struct request {
 
 struct request_create {
   mode_t   mode;
-  int      cache_enabled;
 };
 
 struct request_chmod {
@@ -52,7 +51,6 @@ struct request_mkdir {
 
 struct request_open {
   int      flags;
-  int      cache_enabled;
 };
 
 struct request_read {
@@ -80,6 +78,16 @@ typedef struct request_truncate request_truncate_t;
 typedef struct request_write    request_write_t;
 
 struct response_create {
+  int         ret;
+  struct stat sb;
+};
+
+struct response_chmod {
+  int         ret;
+  struct stat sb;
+};
+
+struct response_chown {
   int         ret;
   struct stat sb;
 };
@@ -119,6 +127,16 @@ struct response_statvfs {
   struct statvfs sb;
 };
 
+struct response_truncate {
+  int         ret;
+  struct stat sb;
+};
+
+struct response_utimens {
+  int         ret;
+  struct stat sb;
+};
+
 struct response_write {
   int         ret;
   size_t      size;
@@ -126,12 +144,16 @@ struct response_write {
 };
 
 typedef struct response_create        response_create_t;
+typedef struct response_chmod         response_chmod_t;
+typedef struct response_chmod         response_chown_t;
 typedef struct response_getattr       response_getattr_t;
 typedef struct response_open          response_open_t;
 typedef struct response_read          response_read_t;
 typedef struct response_readdir_entry response_readdir_entry_t;
 typedef struct response_readdir       response_readdir_t;
 typedef struct response_statvfs       response_statvfs_t;
+typedef struct response_truncate      response_truncate_t;
+typedef struct response_utimens       response_utimens_t;
 typedef struct response_write         response_write_t;
 
 #endif /* NFS_FUSE_HEADERS_H_ */

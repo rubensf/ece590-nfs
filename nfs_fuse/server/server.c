@@ -74,9 +74,10 @@ void handle_request_create(char* complete_path) {
               complete_path, req_create.mode, strerror(errno));
     resp_create.ret = errno;
   } else if (fstat(fd, &resp_create.sb) == -1) {
-    log_error("Couldn't get stats for file %s with: %s",
+    log_error("Bug: Couldn't get stats for file %s with: %s",
               complete_path, strerror(errno));
-    resp_create.ret = -ENOENT; // Need to have create errors.
+    resp_create.ret = -EFAULT;
+    unlink(complete_path);
   }
   close(fd);
 
@@ -90,13 +91,18 @@ void handle_request_chmod(char* complete_path) {
   request_chmod_t req_mode;
   read(cfd, &req_mode, sizeof(request_chmod_t));
 
-  int ret = 0;
+  response_chmod_t resp;
+  memset(&resp.sb, 0, sizeof(struct stat));
+  resp.ret = 0;
   if (chmod(complete_path, req_mode.mode) != 0) {
-    ret = errno;
+    resp.ret = errno;
     log_error("Error setting mod of %s: %s", complete_path, strerror(errno));
+  } else if (stat(complete_path, &resp.sb) != 0) {
+    log_error("Unable to retrieve stats for %s: %s",
+              complete_path, strerror(errno));
   }
 
-  write(cfd, &ret, sizeof(int));
+  write(cfd, &resp, sizeof(response_chmod_t));
 
   log_trace("End Handling Chmod");
 }
@@ -107,13 +113,18 @@ void handle_request_chown(char* complete_path) {
   request_chown_t req_own;
   read(cfd, &req_own, sizeof(request_chown_t));
 
-  int ret = 0;
+  response_chown_t resp;
+  memset(&resp.sb, 0, sizeof(struct stat));
+  resp.ret = 0;
   if (chown(complete_path, req_own.uid, req_own.gid) != 0) {
-    ret = errno;
+    resp.ret = errno;
     log_error("Error setting own of %s: %s", complete_path, strerror(errno));
+  } else if (stat(complete_path, &resp.sb) != 0) {
+    log_error("Unable to retrieve stats for %s: %s",
+              complete_path, strerror(errno));
   }
 
-  write(cfd, &ret, sizeof(int));
+  write(cfd, &resp, sizeof(response_chown_t));
 
   log_trace("End Handling Chown");
 }
@@ -372,12 +383,17 @@ void handle_request_truncate(char* complete_path) {
   request_truncate_t req_trunc;
   read(cfd, &req_trunc, sizeof(request_truncate_t));
 
-  int ret = truncate(complete_path, req_trunc.offset);
-  if (ret != 0) {
+  response_truncate_t resp;
+  memset(&resp.sb, 0, sizeof(struct stat));
+  resp.ret = truncate(complete_path, req_trunc.offset);
+  if (resp.ret != 0) {
     log_error("Unable to truncate %s: %s", complete_path, strerror(errno));
-    ret = errno;
+    resp.ret = errno;
+  } else if (stat(complete_path, &resp.sb) == -1) {
+    log_error("Couldn't get stats for file %s with: %s",
+              complete_path, strerror(errno));
   }
-  write(cfd, &ret, sizeof(int));
+  write(cfd, &resp, sizeof(response_truncate_t));
 
   log_trace("End Handling Truncate");
 }
@@ -401,20 +417,25 @@ void handle_request_utimens(char* complete_path) {
   struct timespec tv[2];
   read(cfd, &tv, 2*sizeof(struct timespec));
 
-  int access = O_WRONLY | O_TRUNC;
-  int fd = open(complete_path, access);
-
-  int ret = 0;
-  if (fd == -1) {
-    log_error("Unable to set utimens for %s: %s", complete_path, strerror(errno));
-    ret = errno;
+  response_utimens_t resp;
+  memset(&resp.sb, 0, sizeof(resp.sb));
+  resp.ret = 0;
+  int fd;
+  if ((fd = open(complete_path, O_WRONLY | O_TRUNC)) == -1) {
+    log_error("Unable to open file for utimens %s: %s",
+              complete_path, strerror(errno));
+    resp.ret = errno;
   } else if (futimens(fd, tv) == -1) {
-    ret = errno;
+    log_error("Unable to set utimens for %s: %s",
+              complete_path, strerror(errno));
+    resp.ret = errno;
     return;
+  } else if (fstat(fd, &resp.sb) == -1) {
+    log_error("Unable to retrieve stats for %s: %s",
+              complete_path, strerror(errno));
   }
 
-  write(cfd, &ret, sizeof(int));
-
+  write(cfd, &resp, sizeof(response_utimens_t));
   log_trace("End Handling Utimens");
 }
 

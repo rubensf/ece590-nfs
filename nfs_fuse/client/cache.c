@@ -55,6 +55,11 @@ int init_cache(const char* hostname, int port, size_t chunk_size_) {
   log_trace("End Configuring Redis");
 }
 
+int close_cache() {
+  if (c)
+    redisFree(c);
+}
+
 int clear_cache() {
   redisReply* reply = redisCommand(c, "FLUSHALL");
   int ret;
@@ -89,6 +94,19 @@ static int load_error_check(redisReply* reply, size_t expected_size) {
 }
 
 // Field name must be \0 terminated.
+static int save_common(const unsigned char* sha1_key, char* field_name,
+                       void* in_data, size_t data_size) {
+  redisReply* reply =
+      redisCommand(c, "hset %b %s %b", sha1_key, SHA_DIGEST_LENGTH,
+                   field_name, in_data, data_size);
+
+  int ret = 0;
+  if (reply == NULL || reply->type != REDIS_REPLY_INTEGER)
+    ret = -1;
+  freeReplyObject(reply);
+  return 0;
+}
+
 static int load_common(const unsigned char* sha1_key,
                        char* field_name, off_t offset,
                        void* out_data, size_t out_size) {
@@ -122,20 +140,50 @@ static int load_chunk_data(const unsigned char* sha1_key,
   return load_common(sha1_key, chunk_n_str, offset, chunk_data, size);
 }
 
-static int load_open(const unsigned char* sha1_key,
-                     int* open_flags) {
-  log_trace("Reading Flags of Open");
-  return load_common(sha1_key,
-                     NFS_REDIS_OPEN_FIELD_NAME, 0,
+static int save_open_flags_internal(const unsigned char* sha1_key, int open_flags) {
+  return save_common(sha1_key, NFS_REDIS_OPEN_FIELD_NAME,
+                     &open_flags, sizeof(int));
+}
+
+static int save_stat_internal(const unsigned char* sha1_key, struct stat sb) {
+  return save_common(sha1_key, NFS_REDIS_STAT_FIELD_NAME,
+                     &sb, sizeof(struct stat));
+}
+
+static int load_open_flags_internal(const unsigned char* sha1_key,
+                              int* open_flags) {
+  return load_common(sha1_key, NFS_REDIS_OPEN_FIELD_NAME, 0,
                      open_flags, sizeof(int));
 }
 
-static int load_stat(const unsigned char* sha1_key,
-                     struct stat* sb) {
-  log_trace("Reading Stats of File");
-  return load_common(sha1_key,
-                     NFS_REDIS_STAT_FIELD_NAME, 0,
+static int load_stat_internal(const unsigned char* sha1_key,
+                              struct stat* sb) {
+  return load_common(sha1_key, NFS_REDIS_STAT_FIELD_NAME, 0,
                      sb, sizeof(struct stat));
+}
+
+int save_open_flags(const char* path, int open_flags) {
+  unsigned char sha1_key[SHA_DIGEST_LENGTH];
+  SHA1(path, strlen(path), sha1_key);
+  return save_open_flags_internal(sha1_key, open_flags);
+}
+
+int save_stat(const char* path, struct stat sb) {
+  unsigned char sha1_key[SHA_DIGEST_LENGTH];
+  SHA1(path, strlen(path), sha1_key);
+  return save_stat_internal(sha1_key, sb);
+}
+
+int load_open_flags(const char* path, int* open_flags) {
+  unsigned char sha1_key[SHA_DIGEST_LENGTH];
+  SHA1(path, strlen(path), sha1_key);
+  return load_open_flags_internal(sha1_key, open_flags);
+}
+
+int load_stat(const char* path, struct stat* sb) {
+  unsigned char sha1_key[SHA_DIGEST_LENGTH];
+  SHA1(path, strlen(path), sha1_key);
+  return load_stat_internal(sha1_key, sb);
 }
 
 int save_metadata(const char* path, int open_flags, struct stat sb) {
@@ -144,24 +192,10 @@ int save_metadata(const char* path, int open_flags, struct stat sb) {
   unsigned char sha1_key[SHA_DIGEST_LENGTH];
   SHA1(path, strlen(path), sha1_key);
 
-  redisReply* reply_open =
-      redisCommand(c, "hset %b %s %d", sha1_key, SHA_DIGEST_LENGTH,
-                   NFS_REDIS_OPEN_FIELD_NAME, open_flags);
-  redisReply* reply_stat =
-      redisCommand(c, "hset %b %s %b", sha1_key, SHA_DIGEST_LENGTH,
-                   NFS_REDIS_STAT_FIELD_NAME, &sb, sizeof(struct stat));
+  int ret1 = save_open_flags_internal(sha1_key, open_flags);
+  int ret2 = save_stat_internal(sha1_key, sb);
 
-  int ret = 0;
-  if (reply_open == NULL || reply_stat == NULL ||
-      reply_open->type != REDIS_REPLY_INTEGER ||
-      reply_stat->type != REDIS_REPLY_INTEGER) {
-    log_error("Saving metadata failed.");
-    ret = -1;
-  }
-
-  freeReplyObject(reply_open);
-  freeReplyObject(reply_stat);
-  return ret;
+  return ret1 || ret2;
 }
 
 int load_metadata(const char* path, int* open_flags, struct stat* sb) {
@@ -170,10 +204,10 @@ int load_metadata(const char* path, int* open_flags, struct stat* sb) {
   unsigned char sha1_key[SHA_DIGEST_LENGTH];
   SHA1(path, strlen(path), sha1_key);
 
-  int ret_open = load_open(sha1_key, open_flags);
-  int ret_stat = load_stat(sha1_key, sb);
+  int ret1 = load_open_flags_internal(sha1_key, open_flags);
+  int ret2 = load_stat_internal(sha1_key, sb);
 
-  return ret_open || ret_stat;
+  return ret1 || ret2;
 }
 
 static int save_error_check(const char* path, off_t offset, size_t size) {
