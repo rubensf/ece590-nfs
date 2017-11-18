@@ -3,6 +3,7 @@
 #include <fuse.h>
 
 #include <errno.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +21,28 @@
 
 static int sfd;
 static int cache_enabled = CACHE_ENABLED_DEFAULT;
-static int cache_chunk_size = 0;
+static size_t cache_chunk_size = 0;
+
+static struct options {
+  const char* server_addr;
+  const char* server_port;
+  const char* redis_addr;
+  int redis_port;
+  int enable_cache;
+  size_t cache_chunk_size;
+} options;
+
+#define OPTION(t, p, b) { t, offsetof(struct options, p), b }
+static const struct fuse_opt option_spec[] = {
+  OPTION("--server-addr=%s", server_addr, 0),
+  OPTION("--server-port=%s", server_port, 0),
+  OPTION("--redis-addr=%s", redis_addr, 0),
+  OPTION("--redis-port=%s", redis_port, 0),
+  OPTION("--enable-cache", enable_cache, 1),
+  OPTION("--noenable-cache", enable_cache, 0),
+  OPTION("--cache-size=%lu", cache_chunk_size, 0),
+  FUSE_OPT_END
+};
 
 // Automatically initialized to 0.
 static const char testblock[sizeof(struct stat)];
@@ -127,18 +149,22 @@ static void* nfs_fuse_init(struct fuse_conn_info* conn) {
   log_trace("Fuse Call: Init");
 
   // TODO Allow for external IP.
-  sfd = create_inet_stream_socket("127.0.0.1", "1111", LIBSOCKET_IPv4, 0);
+  sfd = create_inet_stream_socket(options.server_addr,
+                                  options.server_port,
+                                  LIBSOCKET_IPv4, 0);
   if (sfd < 0) {
     log_fatal("Failed to start fuse connection: %s", strerror(errno));
     exit(1);
   }
   log_trace("Socket up and running");
 
-  if (init_cache(NULL, 0, 0) == -1) {
+  if (init_cache(options.redis_addr,
+                 options.redis_port,
+                 options.cache_chunk_size) == -1) {
     log_fatal("Could not initialize cache.");
     exit(1);
   }
-  cache_chunk_size = get_chunk_size();
+  options.cache_chunk_size = get_chunk_size();
   log_trace("Cache up and running");
 
   return NULL;
@@ -258,9 +284,10 @@ static int nfs_fuse_read(const char* path,
       if (ret != 0)
         log_error("Failed to read from cache.");
     } else {
-      off_t first_off = (offset/cache_chunk_size) * cache_chunk_size;
+      size_t cs = options.cache_chunk_size;
+      off_t first_off = (offset/cs) * cs;
       off_t final_off =
-          (((offset + size - 1)/cache_chunk_size) + 1) * cache_chunk_size;
+          (((offset + size - 1)/cs) + 1) * cs;
       size_t tot_read = final_off - first_off;
       log_debug("Reading with cache from %lu to %lu", first_off, final_off);
 
@@ -479,10 +506,11 @@ static int nfs_fuse_write(const char* path,
     if (cache_enabled) {
       save_stat(path, resp_write.sb);
 
-      off_t first_off = (offset/cache_chunk_size) * cache_chunk_size;
+      size_t cs = options.cache_chunk_size;
+      off_t first_off = (offset/cs) * cs;
       off_t final_off =
           NFS_CLIENT_MIN(
-              (((offset + size - 1)/cache_chunk_size) + 1) * cache_chunk_size,
+              (((offset + size - 1)/cs) + 1) * cs,
               offset + resp_write.size);
       size_t tot_read = final_off - first_off;
 
@@ -524,6 +552,18 @@ static struct fuse_operations nfs_fuse_oper = {
 
 int main(int argc, char* argv[]) {
   log_set_level(LOG_TRACE);
+
   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+
+  options.server_addr = strdup("127.0.0.1");
+  options.server_port = strdup("1111");
+  options.redis_addr = strdup("127.0.0.1");
+  options.redis_port = 6379;
+  options.enable_cache = 1;
+  options.cache_chunk_size = 4096;
+
+  if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
+    return 1;
+
   return fuse_main(args.argc, args.argv, &nfs_fuse_oper, NULL);
 }
