@@ -86,8 +86,8 @@ static int load_error_check(redisReply* reply, size_t expected_size) {
     log_debug("key-chunk didn't exist");
     return -1;
   } else if (reply->type != REDIS_REPLY_STRING || reply->len != expected_size) {
-    log_error("Redis item was modified by outside sources? Reply type: %d",
-              reply->type);
+    log_error("Redis item was modified by outside sources? Reply type: %d, Reply length: %d, expected length: %d",
+              reply->type, reply->len, expected_size);
     return -2;
   }
   return 0;
@@ -104,7 +104,7 @@ static int save_common(const unsigned char* sha1_key, char* field_name,
   if (reply == NULL || reply->type != REDIS_REPLY_INTEGER)
     ret = -1;
   freeReplyObject(reply);
-  return 0;
+  return ret;
 }
 
 static int load_common(const unsigned char* sha1_key,
@@ -141,6 +141,7 @@ static int load_chunk_data(const unsigned char* sha1_key,
 }
 
 static int save_open_flags_internal(const unsigned char* sha1_key, int open_flags) {
+  log_trace("Saving open flags: %d", open_flags);
   return save_common(sha1_key, NFS_REDIS_OPEN_FIELD_NAME,
                      &open_flags, sizeof(int));
 }
@@ -194,6 +195,8 @@ int save_metadata(const char* path, int open_flags, struct stat sb) {
 
   int ret1 = save_open_flags_internal(sha1_key, open_flags);
   int ret2 = save_stat_internal(sha1_key, sb);
+  if(ret1 != 0) log_error("Failed to save open flags for path: %s", path);
+  if(ret2 != 0) log_error("Failed to save stat for path: %s", path); 
 
   return ret1 || ret2;
 }
@@ -221,7 +224,7 @@ static int save_error_check(const char* path, off_t offset, size_t size) {
 
   // We can only have a size that isn't a chunk size if this is the last block.
   if (offset % chunk_size != 0 ||
-      (offset + size - 1 != tot_l && size % chunk_size != 0)) {
+      (offset + size != tot_l && size % chunk_size != 0)) {
     log_error("Cannot handle data that doesn't fill entire chunks.");
     return -1;
   }
@@ -237,7 +240,7 @@ int save_file(const char* path, off_t offset, size_t size,
   unsigned char sha1_key[SHA_DIGEST_LENGTH];
   SHA1(path, strlen(path), sha1_key);
 
-  if (save_error_check(sha1_key, offset, size) == -1)
+  if (save_error_check(path, offset, size) == -1)
     return -1;
 
   size_t chunk_number;
@@ -247,7 +250,7 @@ int save_file(const char* path, off_t offset, size_t size,
     log_debug("Doing chunk number %ld", chunk_number);
 
     size_t to_save =
-        NFS_REDIS_MIN(chunk_size, offset + size - 1 - chunk_number * chunk_size);
+        NFS_REDIS_MIN(chunk_size, offset + size - chunk_number * chunk_size);
     log_debug("Saving %lu bytes at chunk number %lu", to_save, chunk_number);
 
     redisReply* reply =
@@ -281,12 +284,12 @@ int load_file(const char* path, off_t offset, size_t size,
   SHA1(path, strlen(path), sha1_key);
 
   struct stat sb;
-  if (load_stat(sha1_key, &sb) != 0) {
+  if (load_stat(path, &sb) != 0) {
     log_error("Metadata should have been saved first!");
     return -1;
   }
 
-  size_t max_read = NFS_REDIS_MIN(sb.st_size, offset + size - 1);
+  size_t max_read = NFS_REDIS_MIN(sb.st_size, offset + size);
 
   size_t chunk_number;
   off_t curr_off_data = 0; // It's easier (and faster?) than recalculating at

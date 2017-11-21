@@ -276,12 +276,12 @@ static int nfs_fuse_read(const char* path,
   if (cache_enabled) {
     ret = load_open_flags(path, &open_flags);
     if (ret == 0) {
-      if (!((open_flags & O_RDONLY) ||
-            (open_flags & O_RDWR)))
-        return -EBADF;
+//      if (!((open_flags & O_RDONLY) ||
+//            (open_flags & O_RDWR)))
+//        return -EBADF;
 
       ret = load_file(path, offset, size, buf);
-      if (ret != 0)
+      if (ret == 0)
         log_error("Failed to read from cache.");
     } else {
       size_t cs = options.cache_chunk_size;
@@ -296,7 +296,7 @@ static int nfs_fuse_read(const char* path,
     }
   }
 
-  if (!cache_enabled || ret != 0) {
+  if (!cache_enabled || ret == 0) {
     make_request(path, NFS_FUSE_REQUEST_READ);
     write(sfd, &req, sizeof(request_read_t));
 
@@ -503,6 +503,9 @@ static int nfs_fuse_write(const char* path,
   if (resp_write.ret != 0) {
     log_error("Write for %s failed: %s", path, strerror(errno));
     ret = -resp_write.ret;
+  }
+  else {
+    ret = resp_write.size;
     if (cache_enabled) {
       save_stat(path, resp_write.sb);
 
@@ -520,8 +523,6 @@ static int nfs_fuse_write(const char* path,
       memcpy(newbuf + offset - first_off, buf, resp_write.size);
       save_file(path, first_off, tot_read, newbuf);
     }
-  } else {
-    ret = resp_write.size;
   }
 
   log_trace("End Fuse Call Write");
