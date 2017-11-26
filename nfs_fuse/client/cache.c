@@ -83,12 +83,12 @@ size_t get_chunk_size() {
 
 static int load_error_check(redisReply* reply, size_t expected_size) {
   if (reply == NULL) {
-    log_debug("key-chunk didn't exist");
+    log_debug("Key-chunk didn't exist");
     return -1;
   } else if (reply->type != REDIS_REPLY_STRING || reply->len != expected_size) {
     log_error("Redis item was modified by outside sources? Reply type: %d, Reply length: %d, expected length: %d",
               reply->type, reply->len, expected_size);
-    return -2;
+    return -1;
   }
   return 0;
 }
@@ -96,6 +96,7 @@ static int load_error_check(redisReply* reply, size_t expected_size) {
 // Field name must be \0 terminated.
 static int save_common(const unsigned char* sha1_key, char* field_name,
                        void* in_data, size_t data_size) {
+  log_trace("Saving field %s for key %s", field_name, sha1_key);
   redisReply* reply =
       redisCommand(c, "hset %b %s %b", sha1_key, SHA_DIGEST_LENGTH,
                    field_name, in_data, data_size);
@@ -110,6 +111,7 @@ static int save_common(const unsigned char* sha1_key, char* field_name,
 static int load_common(const unsigned char* sha1_key,
                        char* field_name, off_t offset,
                        void* out_data, size_t out_size) {
+  log_trace("Reading field %s for key %s", field_name, sha1_key);
   redisReply* reply =
       redisCommand(c, "hget %b %s", sha1_key, SHA_DIGEST_LENGTH, field_name);
   int ret = load_error_check(reply, out_size);
@@ -277,9 +279,6 @@ int load_file(const char* path, off_t offset, size_t size,
               char* out_data) {
   log_trace("Loading file: %s at offset %lu with size %lu",
             path, offset, size);
-  if (size == 0)
-    return 0;
-
   unsigned char sha1_key[SHA_DIGEST_LENGTH];
   SHA1(path, strlen(path), sha1_key);
 
@@ -288,6 +287,9 @@ int load_file(const char* path, off_t offset, size_t size,
     log_error("Metadata should have been saved first!");
     return -1;
   }
+
+  if (size == 0)
+    return 0;
 
   size_t max_read = NFS_REDIS_MIN(sb.st_size, offset + size);
 

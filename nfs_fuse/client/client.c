@@ -48,7 +48,7 @@ static const struct fuse_opt option_spec[] = {
 static const char testblock[sizeof(struct stat)];
 
 void make_request(const char* path, int req_type) {
-  log_trace("Making a request (code %d) for %s", req_type, path);
+  log_info("Making a request (code %d) for %s", req_type, path);
   size_t path_l = strlen(path);
 
   request_t* req = malloc(sizeof(request_t) + path_l);
@@ -217,29 +217,29 @@ static int nfs_fuse_mkdir(const char* path,
   return -ret;
 }
 
+// TODO Support individual open flags wth file handlers.
 static int nfs_fuse_open(const char* path,
                          struct fuse_file_info* fi) {
   log_trace("Fuse Call: Open %s", path);
 
+  // Basically sanity check to see if file exists/is accessible.
   make_request(path, NFS_FUSE_REQUEST_OPEN);
 
   request_open_t req;
-  req.flags = fi->flags;
+  req.flags = O_RDWR;
   write(sfd, &req, sizeof(request_open_t));
 
   response_open_t resp;
   read(sfd, &resp, sizeof(response_open_t));
 
   int ret = resp.ret;
-  if (resp.ret != 0) {
+  if (resp.ret == -1) {
     log_error("Fuse Open for %s failed: %s", path, strerror(resp.ret));
     ret = -resp.ret;
   } else if (cache_enabled) {
     int flags;
     struct stat sb;
     if (load_metadata(path, &flags, &sb) != 0) {
-      // TODO Support multiple open files on same client by using file handles.
-      // Trick: just merge open flags so both opens work.
       req.flags |= flags;
       if (req.flags & O_RDWR ||
           (req.flags & O_RDONLY && req.flags & O_WRONLY)) {
@@ -266,7 +266,7 @@ static int nfs_fuse_read(const char* path,
                          struct fuse_file_info* fi) {
   log_trace("Fuse Call: Read %s", path);
 
-  int ret;
+  int ret = 0;
   int open_flags;
 
   request_read_t req;
@@ -275,13 +275,13 @@ static int nfs_fuse_read(const char* path,
   // First check if file is in cache
   if (cache_enabled) {
     ret = load_open_flags(path, &open_flags);
-    if (ret == 0) {
+    if (ret != -1) {
 //      if (!((open_flags & O_RDONLY) ||
 //            (open_flags & O_RDWR)))
 //        return -EBADF;
 
       ret = load_file(path, offset, size, buf);
-      if (ret == 0)
+      if (ret == -1)
         log_error("Failed to read from cache.");
     } else {
       size_t cs = options.cache_chunk_size;
@@ -296,7 +296,7 @@ static int nfs_fuse_read(const char* path,
     }
   }
 
-  if (!cache_enabled || ret == 0) {
+  if (!cache_enabled || ret == -1) {
     make_request(path, NFS_FUSE_REQUEST_READ);
     write(sfd, &req, sizeof(request_read_t));
 
@@ -313,7 +313,7 @@ static int nfs_fuse_read(const char* path,
         char* retbuf = malloc(resp_read.size);
         read(sfd, retbuf, resp_read.size);
 
-        save_file(path, req.offset, resp_read.size, buf);
+        save_file(path, req.offset, resp_read.size, retbuf);
 
         size_t read_from_requested =
           NFS_CLIENT_MIN(req.offset + resp_read.size - offset, size);
@@ -374,9 +374,6 @@ static int nfs_fuse_readdir(const char* path,
 static int nfs_fuse_release(const char* path,
                             struct fuse_file_info* fi) {
   log_trace("Fuse Call: Release %s", path);
-
-  // No need to keep last_modify anymore.
-  free((struct timespec *) fi->fh);
 
   make_request(path, NFS_FUSE_REQUEST_RELEASE);
 
@@ -499,7 +496,7 @@ static int nfs_fuse_write(const char* path,
   response_write_t resp_write;
   read(sfd, &resp_write, sizeof(response_write_t));
 
-  int ret;
+  int ret = 0;
   if (resp_write.ret != 0) {
     log_error("Write for %s failed: %s", path, strerror(errno));
     ret = -resp_write.ret;
