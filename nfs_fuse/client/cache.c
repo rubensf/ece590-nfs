@@ -200,7 +200,7 @@ int save_metadata(const char* path, int open_flags, struct stat sb) {
   if(ret1 != 0) log_error("Failed to save open flags for path: %s", path);
   if(ret2 != 0) log_error("Failed to save stat for path: %s", path); 
 
-  return ret1 || ret2;
+  return (ret1 || ret2) ? -1 : 0;
 }
 
 int load_metadata(const char* path, int* open_flags, struct stat* sb) {
@@ -212,7 +212,7 @@ int load_metadata(const char* path, int* open_flags, struct stat* sb) {
   int ret1 = load_open_flags_internal(sha1_key, open_flags);
   int ret2 = load_stat_internal(sha1_key, sb);
 
-  return ret1 || ret2;
+  return (ret1 || ret2) ? -1 : 0;
 }
 
 static int save_error_check(const char* path, off_t offset, size_t size) {

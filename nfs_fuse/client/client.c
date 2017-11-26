@@ -30,6 +30,9 @@ static struct options {
   int redis_port;
   int enable_cache;
   size_t cache_chunk_size;
+  int cache_check_time;
+
+  int help;
 } options;
 
 #define OPTION(t, p, b) { t, offsetof(struct options, p), b }
@@ -41,6 +44,8 @@ static const struct fuse_opt option_spec[] = {
   OPTION("--enable-cache", enable_cache, 1),
   OPTION("--noenable-cache", enable_cache, 0),
   OPTION("--cache-size=%lu", cache_chunk_size, 0),
+  OPTION("--cache-check-time=%d", cache_check_time, 0),
+  OPTION("--help", help, 1),
   FUSE_OPT_END
 };
 
@@ -217,42 +222,75 @@ static int nfs_fuse_mkdir(const char* path,
   return -ret;
 }
 
+static int simple_open_request(const char* path, int flags,
+                               response_open_t* resp) {
+  make_request(path, NFS_FUSE_REQUEST_OPEN);
+  request_open_t req;
+  req.flags = flags;
+  write(sfd, &req, sizeof(request_open_t));
+  read(sfd, resp, sizeof(response_open_t));
+  return resp->ret;
+}
+
 // TODO Support individual open flags wth file handlers.
 static int nfs_fuse_open(const char* path,
                          struct fuse_file_info* fi) {
   log_trace("Fuse Call: Open %s", path);
 
-  // Basically sanity check to see if file exists/is accessible.
-  make_request(path, NFS_FUSE_REQUEST_OPEN);
-
-  request_open_t req;
-  req.flags = O_RDWR;
-  write(sfd, &req, sizeof(request_open_t));
-
-  response_open_t resp;
-  read(sfd, &resp, sizeof(response_open_t));
-
-  int ret = resp.ret;
-  if (resp.ret == -1) {
-    log_error("Fuse Open for %s failed: %s", path, strerror(resp.ret));
-    ret = -resp.ret;
-  } else if (cache_enabled) {
-    int flags;
+  int ret = 0;
+  if (cache_enabled) {
+    int open_flags;
     struct stat sb;
-    if (load_metadata(path, &flags, &sb) != 0) {
-      req.flags |= flags;
-      if (req.flags & O_RDWR ||
-          (req.flags & O_RDONLY && req.flags & O_WRONLY)) {
-        req.flags &= (O_RDONLY ^ 1) && (O_WRONLY ^ 1);
-        req.flags |= O_RDWR;
+    ret = load_metadata(path, &open_flags, &sb);
+
+    // Check if we should invalidate cache.
+    if (ret != -1) {
+      struct timespec curr_time;
+      clock_gettime(CLOCK_REALTIME, &curr_time);
+
+      double diff = difftime(curr_time.tv_sec, sb.st_mtim.tv_sec);
+      if (diff > options.cache_check_time) {
+        log_debug("Checking file curr timespec.");
+        response_open_t resp;
+        ret = simple_open_request(path, fi->flags, &resp);
+
+        if (resp.ret == 0 && sb.st_mtim.tv_sec != resp.sb.st_mtim.tv_sec) {
+          log_debug("Invalidated cache for %s", path);
+          remove_file(path);
+
+          save_metadata(path, fi->flags, resp.sb);
+        }
+      } else {
+        int new_flags;
+
+        open_flags = open_flags & (O_RDONLY | O_WRONLY | O_RDWR);
+        fi->flags = fi->flags & (O_RDONLY | O_WRONLY | O_RDWR);
+
+        new_flags = (open_flags | fi->flags);
+        if (((new_flags & O_RDONLY) && (new_flags & O_WRONLY)) ||
+            (new_flags & O_RDWR)) {
+          new_flags &= (~O_RDONLY) && (~O_WRONLY);
+          new_flags |= O_RDWR;
+        }
+
+        save_open_flags(path, new_flags);
       }
+    } else
+      log_debug("Cache read failed.");
+  }
 
-      // Invalidate cache if it was modified by other sources.
-      if (memcmp(&sb.st_mtim, &resp.sb.st_mtim, sizeof(struct timespec)) != 0)
-        remove_file(path);
+  if (!cache_enabled || ret != 0) {
+    // Basically sanity check to see if file exists/is accessible.
+    ret = 0;
+    response_open_t resp;
+    simple_open_request(path, fi->flags, &resp);
+
+    if (resp.ret == -1) {
+      log_error("Fuse Open for %s failed: %s", path, strerror(resp.ret));
+      ret = -resp.ret;
+    } else if (cache_enabled) {
+      save_metadata(path, fi->flags, resp.sb);
     }
-
-    save_metadata(path, req.flags, resp.sb);
   }
 
   log_trace("End Fuse Call Open");
@@ -375,13 +413,8 @@ static int nfs_fuse_release(const char* path,
                             struct fuse_file_info* fi) {
   log_trace("Fuse Call: Release %s", path);
 
-  make_request(path, NFS_FUSE_REQUEST_RELEASE);
-
   int ret = 0;
-  read(sfd, &ret, sizeof(int));
-  if (ret != 0) {
-    log_error("Release for %s failed: %s", path, strerror(ret));
-  } else if (cache_enabled) {
+  if (cache_enabled) {
     save_open_flags(path, 0);
   }
 
@@ -438,7 +471,7 @@ static int nfs_fuse_truncate(const char* path,
   }
 
   log_trace("End Fuse Call Truncate");
-  return resp.ret;
+  return -resp.ret;
 }
 
 static int nfs_fuse_unlink(const char* path) {
@@ -559,9 +592,16 @@ int main(int argc, char* argv[]) {
   options.redis_port = 6379;
   options.enable_cache = 1;
   options.cache_chunk_size = 4096;
+  options.cache_check_time = 60;
+  options.help = 0;
 
   if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
     return 1;
+
+  if (options.help) {
+    // Print help.
+    return 0;
+  }
 
   return fuse_main(args.argc, args.argv, &nfs_fuse_oper, NULL);
 }
