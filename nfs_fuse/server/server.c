@@ -496,6 +496,9 @@ void handle_request_write(char* complete_path) {
 }
 
 void handle_requests() {
+  int fails = 0;
+  int max_fails = 100;
+
   while (1) {
     request_t* req = read_request(cfd);
     char* complete_path = make_complete_path(req->path, req->path_l);
@@ -536,9 +539,12 @@ void handle_requests() {
         break;
       // Socket broken case.
       default:
-        log_error("Invalid request type or not properly formatted.");
-        handle_request_destroy("");
-        return;
+        fail++;
+        if (fail > max_fails) {
+          log_error("Invalid request type or not properly formatted.");
+          handle_request_destroy("");
+          return;
+        }
     }
 
     free(complete_path);

@@ -533,6 +533,7 @@ static int nfs_fuse_write(const char* path,
   make_request(path, NFS_FUSE_REQUEST_WRITE);
 
   size_t tot_req = sizeof(request_write_t) + size;
+  log_debug("Tot req write size: %lu", tot_req);
 
   request_write_t* req_write = malloc(tot_req);
   req_write->size = size;
