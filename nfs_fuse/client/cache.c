@@ -294,6 +294,7 @@ int load_file(const char* path, off_t offset, size_t size,
     return 0;
 
   size_t max_read = NFS_REDIS_MIN(sb.st_size, offset + size);
+  log_debug("Current file size: %lu, max read: %lu", sb.st_size, max_read);
 
   size_t chunk_number;
   off_t curr_off_data = 0; // It's easier (and faster?) than recalculating at

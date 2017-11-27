@@ -450,14 +450,15 @@ void handle_request_write(char* complete_path) {
   log_trace("Handling Request: Write %s", complete_path);
 
   request_write_t req_write;
-  read(cfd, &req_write.size, sizeof(req_write.size));
+  read(cfd, &req_write, sizeof(request_write_t));
   char* data = malloc(req_write.size);
   read(cfd, data, req_write.size);
-  log_debug("Write: Got data of length %d", req_write.size);
+  log_debug("Write: Got data of length %lu at off %lu",
+            req_write.size, req_write.offset);
 
   response_write_t resp_write;
 
-  int access = O_WRONLY | O_CREAT | O_TRUNC;
+  int access = O_WRONLY;
   int fd = open(complete_path, access, S_IRWXU);
   if (fd == -1) {
     log_error("Unable to open file %s with write, create, truncate: %s",

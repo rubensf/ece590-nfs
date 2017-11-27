@@ -18,6 +18,7 @@
 #define CACHE_ENABLED_DEFAULT 1
 
 #define NFS_CLIENT_MIN(a, b) ((a) < (b)) ? (a) : (b)
+#define NFS_CLIENT_MAX(a, b) ((a) > (b)) ? (a) : (b)
 
 static int sfd;
 static int cache_enabled = CACHE_ENABLED_DEFAULT;
@@ -111,7 +112,7 @@ static int nfs_fuse_chmod(const char* path,
   if (resp.ret != 0) {
     log_error("Fuse Chmod for %s failed: %s", path, strerror(resp.ret));
   } else if (cache_enabled &&
-             memcmp(&resp.sb, testblock, sizeof(struct stat)) == 0) {
+             memcmp(&resp.sb, testblock, sizeof(struct stat)) != 0) {
     save_stat(path, &resp.sb);
   }
 
@@ -135,7 +136,7 @@ static int nfs_fuse_chown(const char* path,
   if (resp.ret != 0) {
     log_error("Fuse Chown for %s failed: %s", path, strerror(resp.ret));
   } else if (cache_enabled &&
-             memcmp(&resp.sb, testblock, sizeof(struct stat)) == 0) {
+             memcmp(&resp.sb, testblock, sizeof(struct stat)) != 0) {
     save_stat(path, &resp.sb);
   }
 
@@ -462,7 +463,7 @@ static int nfs_fuse_statfs(const char* path,
 
 static int nfs_fuse_truncate(const char* path,
                              off_t offset) {
-  log_trace("Fuse Call: Truncate %s", path);
+  log_trace("Fuse Call: Truncate %s with off %lu", path, offset);
 
   make_request(path, NFS_FUSE_REQUEST_TRUNCATE);
 
@@ -475,7 +476,7 @@ static int nfs_fuse_truncate(const char* path,
   if (resp.ret != 0) {
     log_error("Truncate failed: %s", strerror(resp.ret));
   } else if (cache_enabled &&
-             memcmp(&resp.sb, testblock, sizeof(struct stat)) == 0) {
+             memcmp(&resp.sb, testblock, sizeof(struct stat)) != 0) {
     save_stat(path, &resp.sb);
   }
 
@@ -512,7 +513,7 @@ static int nfs_fuse_utimens(const char* path,
   if (resp.ret != 0) {
     log_error("Fuse Utimens for %s failed: %s", path, strerror(resp.ret));
   } else if (cache_enabled &&
-             memcmp(&resp.sb, testblock, sizeof(struct stat) == 0)) {
+             memcmp(&resp.sb, testblock, sizeof(struct stat) != 0)) {
     save_stat(path, &resp.sb);
   }
 
@@ -545,23 +546,30 @@ static int nfs_fuse_write(const char* path,
     ret = -resp_write.ret;
   } else {
     ret = resp_write.size;
+    log_debug("Wrote %lu bytes", ret);
     if (cache_enabled) {
-      save_stat(path, &resp_write.sb);
-
       size_t cs = options.cache_chunk_size;
       off_t first_off = (offset/cs) * cs;
-      off_t final_off =
-          NFS_CLIENT_MIN(
-              (((offset + size - 1)/cs) + 1) * cs,
-              offset + resp_write.size);
+      off_t final_off = (((offset + resp_write.size - 1)/cs) + 1) * cs;
       size_t tot_read = final_off - first_off;
+      char* newbuf = malloc(tot_read);
 
       log_debug("Write to cache from %lu to %lu", first_off, final_off);
-      // TODO Optimze for writing chunks in the middle...
-      char* newbuf = malloc(tot_read);
-      load_file(path, first_off, tot_read, newbuf);
-      memcpy(newbuf + offset - first_off, buf, resp_write.size);
-      save_file(path, first_off, tot_read, newbuf);
+
+      // TODO Optmize for writing chunks in the middle...
+      // If the file wasn't on cache to begin with, don't bother populating rn.
+      int act_read = load_file(path, first_off, tot_read, newbuf);
+      if (act_read != -1) {
+        // Hopefull won't leave empty chunks...
+        memcpy(newbuf + offset - first_off, buf, resp_write.size);
+
+        log_debug("Saving stats...");
+        save_stat(path, &resp_write.sb);
+        size_t final_write_size =
+            NFS_CLIENT_MAX(act_read, offset + resp_write.size - first_off);
+        log_debug("Saving file with %lu bytes...", final_write_size);
+        save_file(path, first_off, final_write_size, newbuf);
+      }
     }
   }
 
@@ -579,7 +587,7 @@ static struct fuse_operations nfs_fuse_oper = {
   .mkdir    = nfs_fuse_mkdir,    // Not Cache
   .open     = nfs_fuse_open,     // DONE
   .read     = nfs_fuse_read,     // DONE
-  .readdir  = nfs_fuse_readdir,  // No cached
+  .readdir  = nfs_fuse_readdir,  // DONE
   .release  = nfs_fuse_release,  // DONE
   .rmdir    = nfs_fuse_rmdir,    // Not Cached
   .statfs   = nfs_fuse_statfs,   // Not Cached
