@@ -449,8 +449,12 @@ void handle_request_utimens(char* complete_path) {
 void handle_request_write(char* complete_path) {
   log_trace("Handling Request: Write %s", complete_path);
 
+  // +1 length for \0.
   request_write_t req_write;
-  read(cfd, &req_write, sizeof(request_write_t));
+  read(cfd, &req_write.size, sizeof(req_write.size));
+  read(cfd, &req_write.offset, sizeof(req_write.offset));
+
+  load_debug("Reading %lu bytes of data", req_write.size);
   char* data = malloc(req_write.size);
   read(cfd, data, req_write.size);
   log_debug("Write: Got data of length %lu at off %lu",
@@ -461,7 +465,7 @@ void handle_request_write(char* complete_path) {
   int access = O_WRONLY;
   int fd = open(complete_path, access, S_IRWXU);
   if (fd == -1) {
-    log_error("Unable to open file %s with write, create, truncate: %s",
+    log_error("Unable to open file %s with write: %s",
               complete_path, strerror(errno));
     resp_write.ret = errno;
     resp_write.size = 0;
@@ -484,9 +488,9 @@ void handle_request_write(char* complete_path) {
     close(fd);
   }
 
-  free(data);
   write(cfd, &resp_write, sizeof(response_write_t));
 
+  free(data);
   log_trace("End Handling Write");
 }
 

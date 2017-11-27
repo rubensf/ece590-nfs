@@ -402,7 +402,7 @@ static int nfs_fuse_readdir(const char* path,
   }
 
   log_debug("We have %d entries on this folder", resp.size);
-  int i;
+  size_t i;
   for (i = 0; i < resp.size; i++) {
     response_readdir_entry_t resp_entry;
     read(sfd, &resp_entry, sizeof(response_readdir_entry_t));
