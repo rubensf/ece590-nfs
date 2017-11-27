@@ -1,5 +1,5 @@
 # Some Prereqs
-sudo apt-get install -y libfuse-dev git cmake redis-server libhiredis-dev
+sudo apt-get install -y libfuse-dev git cmake redis-server libhiredis-dev gcc g++
 echo "export LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu/" >> ~/.bashrc
 
 # Configure redis
