@@ -1,5 +1,6 @@
 # Some Prereqs
 sudo apt-get install -y libfuse-dev git cmake redis-server libhiredis-dev
+echo "export LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu/" >> ~/.bashrc
 
 # Configure redis
 sudo echo "maxmemory 128mb" >> /etc/redis/redis.conf
