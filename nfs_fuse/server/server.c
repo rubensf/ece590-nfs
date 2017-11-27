@@ -317,10 +317,11 @@ void handle_request_readdir(char* complete_path) {
     int entry_name_l = strlen(dp->d_name);
     int entry_l = sizeof(response_readdir_entry_t) + entry_name_l;
 
-    char* total_path = malloc(complete_path_l + entry_name_l + 1);
+    char* total_path = malloc(complete_path_l + entry_name_l + 2);
     memcpy(total_path, complete_path, complete_path_l);
-    memcpy(total_path + complete_path_l, dp->d_name, entry_name_l);
-    total_path[complete_path_l + entry_name_l] = '\0';
+    total_path[complete_path_l] = '/';
+    memcpy(total_path + complete_path_l + 1, dp->d_name, entry_name_l);
+    total_path[complete_path_l + entry_name_l + 1] = '\0';
     if (stat(total_path, &ent->sb) == -1) {
       log_error("Failed to get stat for %s", total_path);
       memset(&ent->sb, 0, sizeof(struct stat));
