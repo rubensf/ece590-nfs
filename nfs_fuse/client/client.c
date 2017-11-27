@@ -413,7 +413,8 @@ static int nfs_fuse_readdir(const char* path,
     name[resp_entry.name_l] = '\0';
 
     filler(buf, name, &resp_entry.sb, 0);
-    save_stat(name, &resp_entry.sb);
+    if (memcmp(&resp_entry.sb, testblock, sizeof(struct stat)) != 0)
+      save_stat(name, &resp_entry.sb);
 
     free(name);
   }

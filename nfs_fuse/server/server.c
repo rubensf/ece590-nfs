@@ -310,7 +310,8 @@ void handle_request_readdir(char* complete_path) {
   dirp = opendir(complete_path);
 
   errno = 0;
-  response_readdir_entry_t* ent = (response_readdir_entry_t*) resp_readdir_ptr->data;
+  response_readdir_entry_t* ent =
+      (response_readdir_entry_t*) resp_readdir_ptr->data;
   while ((dp = readdir(dirp)) != NULL) {
     int complete_path_l = strlen(complete_path);
     int entry_name_l = strlen(dp->d_name);
@@ -320,21 +321,15 @@ void handle_request_readdir(char* complete_path) {
     memcpy(total_path, complete_path, complete_path_l);
     memcpy(total_path + complete_path_l, dp->d_name, entry_name_l);
     total_path[complete_path_l + entry_name_l] = '\0';
-    stat(total_path, &ent->sb);
+    if (stat(total_path, &ent->sb) == -1) {
+      log_error("Failed to get stat for %s", total_path);
+      memset(&ent->sb, 0, sizeof(struct stat));
+    }
     free(total_path);
 
     ent->name_l = entry_name_l;
     memcpy(ent->name, dp->d_name, entry_name_l);
     ent = (response_readdir_entry_t*) (((char*) ent) + entry_l);
-  }
-
-  if (errno != 0) {
-    free(resp_readdir_ptr);
-    resp_readdir.ret = errno;
-    resp_readdir.size = 0;
-    write(cfd, &resp_readdir, sizeof(response_readdir_t));
-    log_trace("End Handling Read Dir");
-    return;
   }
 
   write(cfd, resp_readdir_ptr, total_resp_size);
