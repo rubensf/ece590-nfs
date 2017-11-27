@@ -195,7 +195,7 @@ void handle_request_open(char* complete_path) {
   } else if (fstat(fd, &resp_open.sb) == -1) {
     log_error("Couldn't get stats for file %s with: %s",
               complete_path, strerror(errno));
-    resp_open.ret = -ENOENT; // Need to have open errors.
+    resp_open.ret = ENOENT; // Need to have open errors.
   }
   close(fd);
 
@@ -267,7 +267,7 @@ void handle_request_readdir(char* complete_path) {
   DIR* dirp;
 
   if ((dirp = opendir(complete_path)) == NULL) {
-    resp_readdir.ret = -ENOENT;
+    resp_readdir.ret = ENOENT;
     resp_readdir.size = 0;
     write(cfd, &resp_readdir, sizeof(response_readdir_t));
     return;
