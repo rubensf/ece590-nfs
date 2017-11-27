@@ -279,6 +279,7 @@ static int nfs_fuse_open(const char* path,
           new_flags &= (~O_RDONLY) && (~O_WRONLY);
           new_flags |= O_RDWR;
         }
+        log_trace("flags after trick: %x", new_flags);
 
         save_open_flags(path, new_flags);
       }
@@ -524,12 +525,13 @@ static int nfs_fuse_write(const char* path,
                           size_t size,
                           off_t offset,
                           struct fuse_file_info* fi) {
-  log_trace("Fuse Call: Write %s", path);
+  log_trace("Fuse Call: Write %s at off %lu with size %lu", path, offset, size);
 
   make_request(path, NFS_FUSE_REQUEST_WRITE);
 
   request_write_t* req_write = malloc(sizeof(request_write_t) + size);
   req_write->size = size;
+  req_write->offset = offset;
   memcpy(req_write->data, buf, size);
   write(sfd, req_write, sizeof(request_write_t) + size);
   free(req_write);
@@ -541,8 +543,7 @@ static int nfs_fuse_write(const char* path,
   if (resp_write.ret != 0) {
     log_error("Write for %s failed: %s", path, strerror(errno));
     ret = -resp_write.ret;
-  }
-  else {
+  } else {
     ret = resp_write.size;
     if (cache_enabled) {
       save_stat(path, &resp_write.sb);
@@ -555,6 +556,7 @@ static int nfs_fuse_write(const char* path,
               offset + resp_write.size);
       size_t tot_read = final_off - first_off;
 
+      log_debug("Write to cache from %lu to %lu", first_off, final_off);
       // TODO Optimze for writing chunks in the middle...
       char* newbuf = malloc(tot_read);
       load_file(path, first_off, tot_read, newbuf);
@@ -600,7 +602,7 @@ int main(int argc, char* argv[]) {
   options.redis_port = 6379;
   options.enable_cache = 1;
   options.cache_chunk_size = 4096;
-  options.cache_check_time = 60;
+  options.cache_check_time = 600;
   options.help = 0;
 
   if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)

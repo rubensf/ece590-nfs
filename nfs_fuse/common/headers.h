@@ -64,6 +64,7 @@ struct request_truncate {
 
 struct request_write {
   size_t   size;
+  off_t    offset;
   char     data[0];
 };
 

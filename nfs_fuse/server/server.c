@@ -244,7 +244,7 @@ void handle_request_read(char* complete_path) {
     resp_read->stamp = sb.st_mtim;
     resp_read->size = req_read.size;
 
-    if (read(fd, resp_read->data, resp_read->size) == -1) {
+    if (pread(fd, resp_read->data, resp_read->size, resp_read->offset) == -1) {
       resp_read->ret = errno;
       log_error("Read %s failed (%d): %s", complete_path, resp_read->ret, strerror(errno));
     }
@@ -459,24 +459,22 @@ void handle_request_write(char* complete_path) {
   int fd = open(complete_path, access, S_IRWXU);
   if (fd == -1) {
     log_error("Unable to open file %s with write, create, truncate: %s",
-        complete_path, strerror(errno));
+              complete_path, strerror(errno));
     resp_write.ret = errno;
     resp_write.size = 0;
   } else {
     log_trace("Opened file");
 
-    struct stat sb;
-    resp_write.ret = write(fd, data, req_write.size);
-    if (resp_write.ret == -1 || fstat(fd, &sb) == -1) {
+    resp_write.ret = write(fd, data, req_write.size, req_write.offset);
+    if (resp_write.ret == -1 || fstat(fd, &resp_write.sb) == -1) {
       log_error("Unable to write file %s: %s",
-          complete_path, strerror(errno));
+                complete_path, strerror(errno));
       resp_write.ret  = errno;
       resp_write.size = 0;
     } else {
       log_trace("Wrote to file");
 
       resp_write.size = resp_write.ret;
-      resp_write.sb = sb;
       resp_write.ret = 0;
     }
 

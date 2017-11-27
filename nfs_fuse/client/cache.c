@@ -228,8 +228,7 @@ static int save_error_check(const char* path, off_t offset, size_t size) {
   size_t tot_l = sb.st_size;
 
   // We can only have a size that isn't a chunk size if this is the last block.
-  if (offset % chunk_size != 0 ||
-      (offset + size != tot_l && size % chunk_size != 0)) {
+  if (offset % chunk_size != 0 && offset + size != tot_l) {
     log_error("Cannot handle data that doesn't fill entire chunks.");
     return -1;
   }
