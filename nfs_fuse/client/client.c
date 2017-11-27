@@ -34,6 +34,7 @@ static struct options {
   int cache_check_time;
 
   int help;
+  int debug;
 } options;
 
 #define OPTION(t, p, b) { t, offsetof(struct options, p), b }
@@ -47,6 +48,7 @@ static const struct fuse_opt option_spec[] = {
   OPTION("--cache-size=%lu", cache_chunk_size, 0),
   OPTION("--cache-check-time=%d", cache_check_time, 0),
   OPTION("--help", help, 1),
+  OPTION("--debug", debug, 1),
   FUSE_OPT_END
 };
 
@@ -600,8 +602,6 @@ static struct fuse_operations nfs_fuse_oper = {
 };
 
 int main(int argc, char* argv[]) {
-  log_set_level(LOG_TRACE);
-
   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 
   options.server_addr = strdup("127.0.0.1");
@@ -612,12 +612,18 @@ int main(int argc, char* argv[]) {
   options.cache_chunk_size = 4096;
   options.cache_check_time = 600;
   options.help = 0;
+  options.debug = 0;
 
   if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
     return 1;
 
+  if (options.debug)
+    log_set_level(LOG_TRACE);
+
+  cache_enabled = options.enable_cache;
+
   if (options.help) {
-    // Print help.
+    // TODO Print help.
     return 0;
   }
 
