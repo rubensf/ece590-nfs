@@ -544,7 +544,7 @@ void handle_requests() {
 }
 
 int main(int argc, char* argv[]) {
-  if (argc != 2) {
+  if (argc < 2) {
     log_error("Wrong number of arguments!");
     exit(1);
   }
@@ -552,7 +552,14 @@ int main(int argc, char* argv[]) {
   nfs_root_path = argv[1];
   nfs_root_path_l = strlen(argv[1]);
 
-  log_set_level(LOG_TRACE);
+  if (argc >= 3) {
+    int debug_on = atoi(argv[2]);
+    if (debug_on)
+      log_set_level(LOG_TRACE);
+    else
+      log_set_level(LOG_FATAL);
+  }
+
   int sfd;
   char src_host[128], src_port[7];
 

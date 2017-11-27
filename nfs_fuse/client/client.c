@@ -622,6 +622,8 @@ int main(int argc, char* argv[]) {
 
   if (options.debug)
     log_set_level(LOG_TRACE);
+  else
+    log_set_level(LOG_FATAL);
 
   cache_enabled = options.enable_cache;
 
