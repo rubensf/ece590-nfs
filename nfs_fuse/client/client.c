@@ -172,6 +172,7 @@ static void* nfs_fuse_init(struct fuse_conn_info* conn) {
     log_fatal("Could not initialize cache.");
     exit(1);
   }
+
   options.cache_chunk_size = get_chunk_size();
   log_trace("Cache up and running");
 
@@ -539,7 +540,8 @@ static int nfs_fuse_write(const char* path,
   req_write->size = size;
   req_write->offset = offset;
   memcpy(req_write->data, buf, size);
-  write(sfd, req_write, tot_req);
+  int written = write(sfd, req_write, tot_req);
+  log_debug("wrote tot %d", written);
   free(req_write);
 
   response_write_t resp_write;

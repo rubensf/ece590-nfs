@@ -449,17 +449,18 @@ void handle_request_utimens(char* complete_path) {
 void handle_request_write(char* complete_path) {
   log_trace("Handling Request: Write %s", complete_path);
 
+  int readen = 0;
   // +1 length for \0.
   request_write_t req_write;
-  read(cfd, &req_write.size, sizeof(req_write.size));
-  read(cfd, &req_write.offset, sizeof(req_write.offset));
+  readen += read(cfd, &req_write.size, sizeof(req_write.size));
+  readen += read(cfd, &req_write.offset, sizeof(req_write.offset));
 
   log_debug("Reading %lu bytes of data (tot %lu)", req_write.size,
             req_write.size + sizeof(req_write.offset) + sizeof(req_write.size));
   char* data = malloc(req_write.size);
-  read(cfd, data, req_write.size);
-  log_debug("Write: Got data of length %lu at off %lu",
-            req_write.size, req_write.offset);
+  readen += read(cfd, data, req_write.size);
+  log_debug("Write: Got data of length %lu at off %lu - read tot %d",
+            req_write.size, req_write.offset, readen);
 
   response_write_t resp_write;
 
@@ -496,71 +497,49 @@ void handle_request_write(char* complete_path) {
 }
 
 void handle_requests() {
-  int fails = 0;
-  int max_fails = 100;
-
   while (1) {
     request_t* req = read_request(cfd);
     char* complete_path = make_complete_path(req->path, req->path_l);
 
     switch (req->type) {
       case NFS_FUSE_REQUEST_CREATE:   handle_request_create(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_CHMOD:    handle_request_chmod(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_CHOWN:    handle_request_chown(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_DESTROY:  handle_request_destroy(complete_path);
-                                      fails = 0;
                                       return;
         break;
       case NFS_FUSE_REQUEST_GETATTR:  handle_request_getattr(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_MKDIR:    handle_request_mkdir(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_OPEN:     handle_request_open(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_READ:     handle_request_read(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_READDIR:  handle_request_readdir(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_RELEASE:  handle_request_release(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_RMDIR:    handle_request_rmdir(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_STATVFS:  handle_request_statvfs(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_TRUNCATE: handle_request_truncate(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_UNLINK:   handle_request_unlink(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_UTIMENS:  handle_request_utimens(complete_path);
-                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_WRITE:    handle_request_write(complete_path);
-                                      fails = 0;
         break;
       // Socket broken case.
       default:
-        fails++;
-        if (fails > max_fails) {
-          log_error("Invalid request type or not properly formatted.");
-          handle_request_destroy("");
-          return;
-        }
+        log_error("Invalid request type or not properly formatted.");
+        handle_request_destroy("");
+        return;
     }
 
     free(complete_path);
