@@ -231,7 +231,8 @@ void handle_request_read(char* complete_path) {
   } else {
     log_debug("File should have %d bytes - trying to read %d at off %d",
         sb.st_size, req_read.size, req_read.offset);
-    if (req_read.offset < sb.st_size && req_read.offset + req_read.size > sb.st_size) {
+    if (req_read.offset < sb.st_size &&
+        req_read.offset + req_read.size > sb.st_size) {
       req_read.size = sb.st_size - req_read.offset;
     } else {
       req_read.size = 0;
@@ -244,9 +245,10 @@ void handle_request_read(char* complete_path) {
     resp_read->stamp = sb.st_mtim;
     resp_read->size = req_read.size;
 
-    if (pread(fd, resp_read->data, resp_read->size, resp_read->offset) == -1) {
+    if (pread(fd, resp_read->data, resp_read->size, req_read.offset) == -1) {
       resp_read->ret = errno;
-      log_error("Read %s failed (%d): %s", complete_path, resp_read->ret, strerror(errno));
+      log_error("Read %s failed (%d): %s",
+                complete_path, resp_read->ret, strerror(errno));
     }
 
     write(cfd, resp_read, resp_l);
@@ -465,7 +467,7 @@ void handle_request_write(char* complete_path) {
   } else {
     log_trace("Opened file");
 
-    resp_write.ret = write(fd, data, req_write.size, req_write.offset);
+    resp_write.ret = pwrite(fd, data, req_write.size, req_write.offset);
     if (resp_write.ret == -1 || fstat(fd, &resp_write.sb) == -1) {
       log_error("Unable to write file %s: %s",
                 complete_path, strerror(errno));
