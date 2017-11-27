@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -24,6 +25,10 @@ static int nfs_root_path_l;
 // so there shouldn't be a way of figuring out the difference :)
 // TODO Ensure this global variable won't create problems.
 static int cfd;
+
+void sig_handler(int signo) {
+  close(cfd);
+}
 
 // Forward declare for use by _create.
 void handle_request_getattr(char* complete_path);
@@ -569,6 +574,12 @@ int main(int argc, char* argv[]) {
 
     log_debug("Connection from %s port %s.", src_host, src_port);
     if (fork() == 0) {
+      struct sigaction sa;
+      sa.sa_handler = &sig_handler;
+      sa.sa_flags = SA_RESTART;
+      sigfillset(&sa.sa_mask);
+      sigaction(SIGSTOP, &sa, NULL);
+
       handle_requests();
       return 0;
     }
