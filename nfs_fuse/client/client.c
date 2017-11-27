@@ -88,7 +88,7 @@ static int nfs_fuse_create(const char* path,
     ret = -resp.ret;
   } else if (cache_enabled) {
     remove_file(path);
-    if (save_metadata(path, O_CREAT | O_WRONLY | O_TRUNC, resp.sb) == -1)
+    if (save_metadata(path, O_CREAT | O_WRONLY | O_TRUNC, &resp.sb) == -1)
       log_error("Couldn't save metadata for %s", path);
   }
 
@@ -112,7 +112,7 @@ static int nfs_fuse_chmod(const char* path,
     log_error("Fuse Chmod for %s failed: %s", path, strerror(resp.ret));
   } else if (cache_enabled &&
              memcmp(&resp.sb, testblock, sizeof(struct stat)) == 0) {
-    save_stat(path, resp.sb);
+    save_stat(path, &resp.sb);
   }
 
   log_trace("End Fuse Call Chmod");
@@ -136,7 +136,7 @@ static int nfs_fuse_chown(const char* path,
     log_error("Fuse Chown for %s failed: %s", path, strerror(resp.ret));
   } else if (cache_enabled &&
              memcmp(&resp.sb, testblock, sizeof(struct stat)) == 0) {
-    save_stat(path, resp.sb);
+    save_stat(path, &resp.sb);
   }
 
   log_trace("End Fuse Call Chown");
@@ -183,8 +183,7 @@ static int nfs_fuse_getattr(const char* path,
   if (cache_enabled)
     ret = load_stat(path, stbuf);
 
-  // TODO Save just stats buffer to cache? If we never opened the file...
-  if (!cache_enabled || ret != 0) {
+  if (!cache_enabled || ret == -1) {
     make_request(path, NFS_FUSE_REQUEST_GETATTR);
 
     response_getattr_t resp;
@@ -196,7 +195,7 @@ static int nfs_fuse_getattr(const char* path,
     } else {
       ret = 0;
       memcpy(stbuf, &resp.sb, sizeof(struct stat));
-      save_stat(path, resp.sb);
+      save_stat(path, &resp.sb);
     }
   }
 
@@ -248,17 +247,25 @@ static int nfs_fuse_open(const char* path,
       struct timespec curr_time;
       clock_gettime(CLOCK_REALTIME, &curr_time);
 
-      double diff = difftime(curr_time.tv_sec, sb.st_mtim.tv_sec);
-      if (diff > options.cache_check_time) {
+      double diff1 = difftime(curr_time.tv_sec, sb.st_atim.tv_sec);
+      double diff2 = difftime(curr_time.tv_sec, sb.st_mtim.tv_sec);
+      log_debug("what %.5lf and %.5lf :)", diff1, diff2);
+      if (diff1 > options.cache_check_time &&
+          diff2 > options.cache_check_time) {
         log_debug("Checking file curr timespec.");
         response_open_t resp;
         ret = simple_open_request(path, fi->flags, &resp);
 
-        if (resp.ret == 0 && sb.st_mtim.tv_sec != resp.sb.st_mtim.tv_sec) {
-          log_debug("Invalidated cache for %s", path);
-          remove_file(path);
+        if (resp.ret == 0) {
+          if (sb.st_mtim.tv_sec != resp.sb.st_mtim.tv_sec) {
+            log_debug("Invalidated cache for %s", path);
+            remove_file(path);
+          }
 
-          save_metadata(path, fi->flags, resp.sb);
+          // Updated last access time locally so we don't repeat cache check.
+          // Trick lol.
+          resp.sb.st_atim = curr_time;
+          save_metadata(path, fi->flags, &resp.sb);
         }
       } else {
         int new_flags;
@@ -289,7 +296,7 @@ static int nfs_fuse_open(const char* path,
       log_error("Fuse Open for %s failed: %s", path, strerror(resp.ret));
       ret = -resp.ret;
     } else if (cache_enabled) {
-      save_metadata(path, fi->flags, resp.sb);
+      save_metadata(path, fi->flags, &resp.sb);
     }
   }
 
@@ -386,7 +393,7 @@ static int nfs_fuse_readdir(const char* path,
   read(sfd, &resp, sizeof(response_readdir_t));
 
   if (resp.ret != 0) {
-    log_error("Read dir for %s failed: %s", path, strerror(errno));
+    log_error("Read dir for %s failed: %s", path, strerror(resp.ret));
     return -resp.ret;
   }
 
@@ -401,6 +408,7 @@ static int nfs_fuse_readdir(const char* path,
     name[resp_entry.name_l] = '\0';
 
     filler(buf, name, &resp_entry.sb, 0);
+    save_stat(name, &resp_entry.sb);
 
     free(name);
   }
@@ -467,7 +475,7 @@ static int nfs_fuse_truncate(const char* path,
     log_error("Truncate failed: %s", strerror(resp.ret));
   } else if (cache_enabled &&
              memcmp(&resp.sb, testblock, sizeof(struct stat)) == 0) {
-    save_stat(path, resp.sb);
+    save_stat(path, &resp.sb);
   }
 
   log_trace("End Fuse Call Truncate");
@@ -504,7 +512,7 @@ static int nfs_fuse_utimens(const char* path,
     log_error("Fuse Utimens for %s failed: %s", path, strerror(resp.ret));
   } else if (cache_enabled &&
              memcmp(&resp.sb, testblock, sizeof(struct stat) == 0)) {
-    save_stat(path, resp.sb);
+    save_stat(path, &resp.sb);
   }
 
   log_trace("End Fuse Call Utimens");
@@ -537,7 +545,7 @@ static int nfs_fuse_write(const char* path,
   else {
     ret = resp_write.size;
     if (cache_enabled) {
-      save_stat(path, resp_write.sb);
+      save_stat(path, &resp_write.sb);
 
       size_t cs = options.cache_chunk_size;
       off_t first_off = (offset/cs) * cs;

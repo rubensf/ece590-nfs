@@ -14,11 +14,11 @@ int clear_cache();
 size_t get_chunk_size();
 
 int save_open_flags(const char* path, int open_flags);
-int save_stat(const char* path, struct stat sb);
+int save_stat(const char* path, const struct stat* sb);
 int load_open_flags(const char* path, int* open_flags);
 int load_stat(const char* path, struct stat* sb);
 
-int save_metadata(const char* path, int open_flags, struct stat sb);
+int save_metadata(const char* path, int open_flags, const struct stat* sb);
 int load_metadata(const char* path, int* open_flags, struct stat* sb);
 
 // Always save metadata before saving the file - metadata info is used.

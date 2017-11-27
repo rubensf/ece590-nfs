@@ -95,8 +95,9 @@ static int load_error_check(redisReply* reply, size_t expected_size) {
 
 // Field name must be \0 terminated.
 static int save_common(const unsigned char* sha1_key, char* field_name,
-                       void* in_data, size_t data_size) {
+                       const void* in_data, size_t data_size) {
   log_trace("Saving field %s for key %s", field_name, sha1_key);
+
   redisReply* reply =
       redisCommand(c, "hset %b %s %b", sha1_key, SHA_DIGEST_LENGTH,
                    field_name, in_data, data_size);
@@ -142,19 +143,21 @@ static int load_chunk_data(const unsigned char* sha1_key,
   return load_common(sha1_key, chunk_n_str, offset, chunk_data, size);
 }
 
-static int save_open_flags_internal(const unsigned char* sha1_key, int open_flags) {
-  log_trace("Saving open flags: %d", open_flags);
+static int save_open_flags_internal(const unsigned char* sha1_key,
+                                    int open_flags) {
+  log_trace("Saving open flags: %x", open_flags);
   return save_common(sha1_key, NFS_REDIS_OPEN_FIELD_NAME,
                      &open_flags, sizeof(int));
 }
 
-static int save_stat_internal(const unsigned char* sha1_key, struct stat sb) {
+static int save_stat_internal(const unsigned char* sha1_key,
+                              const struct stat* sb) {
   return save_common(sha1_key, NFS_REDIS_STAT_FIELD_NAME,
-                     &sb, sizeof(struct stat));
+                     sb, sizeof(struct stat));
 }
 
 static int load_open_flags_internal(const unsigned char* sha1_key,
-                              int* open_flags) {
+                                    int* open_flags) {
   return load_common(sha1_key, NFS_REDIS_OPEN_FIELD_NAME, 0,
                      open_flags, sizeof(int));
 }
@@ -171,7 +174,7 @@ int save_open_flags(const char* path, int open_flags) {
   return save_open_flags_internal(sha1_key, open_flags);
 }
 
-int save_stat(const char* path, struct stat sb) {
+int save_stat(const char* path, const struct stat* sb) {
   unsigned char sha1_key[SHA_DIGEST_LENGTH];
   SHA1(path, strlen(path), sha1_key);
   return save_stat_internal(sha1_key, sb);
@@ -189,7 +192,7 @@ int load_stat(const char* path, struct stat* sb) {
   return load_stat_internal(sha1_key, sb);
 }
 
-int save_metadata(const char* path, int open_flags, struct stat sb) {
+int save_metadata(const char* path, int open_flags, const struct stat* sb) {
   log_trace("Saving metadata");
 
   unsigned char sha1_key[SHA_DIGEST_LENGTH];
