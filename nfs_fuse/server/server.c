@@ -454,7 +454,7 @@ void handle_request_write(char* complete_path) {
   read(cfd, &req_write.size, sizeof(req_write.size));
   read(cfd, &req_write.offset, sizeof(req_write.offset));
 
-  load_debug("Reading %lu bytes of data", req_write.size);
+  log_debug("Reading %lu bytes of data", req_write.size);
   char* data = malloc(req_write.size);
   read(cfd, data, req_write.size);
   log_debug("Write: Got data of length %lu at off %lu",
