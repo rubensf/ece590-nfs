@@ -524,11 +524,10 @@ void handle_requests() {
       case NFS_FUSE_REQUEST_WRITE:    handle_request_write(complete_path);
         break;
       // Socket broken case.
-      case 0x7FFC:                    handle_request_destroy(complete_path);
-                                      return;
       default:
         log_error("Invalid request type or not properly formatted.");
-        break;
+        handle_request_destroy("");
+        return;
     }
 
     free(complete_path);
