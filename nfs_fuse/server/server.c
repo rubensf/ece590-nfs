@@ -505,42 +505,58 @@ void handle_requests() {
 
     switch (req->type) {
       case NFS_FUSE_REQUEST_CREATE:   handle_request_create(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_CHMOD:    handle_request_chmod(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_CHOWN:    handle_request_chown(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_DESTROY:  handle_request_destroy(complete_path);
+                                      fails = 0;
                                       return;
         break;
       case NFS_FUSE_REQUEST_GETATTR:  handle_request_getattr(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_MKDIR:    handle_request_mkdir(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_OPEN:     handle_request_open(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_READ:     handle_request_read(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_READDIR:  handle_request_readdir(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_RELEASE:  handle_request_release(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_RMDIR:    handle_request_rmdir(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_STATVFS:  handle_request_statvfs(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_TRUNCATE: handle_request_truncate(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_UNLINK:   handle_request_unlink(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_UTIMENS:  handle_request_utimens(complete_path);
+                                      fails = 0;
         break;
       case NFS_FUSE_REQUEST_WRITE:    handle_request_write(complete_path);
+                                      fails = 0;
         break;
       // Socket broken case.
       default:
-        fail++;
-        if (fail > max_fails) {
+        fails++;
+        if (fails > max_fails) {
           log_error("Invalid request type or not properly formatted.");
           handle_request_destroy("");
           return;
