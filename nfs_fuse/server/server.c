@@ -449,18 +449,14 @@ void handle_request_utimens(char* complete_path) {
 void handle_request_write(char* complete_path) {
   log_trace("Handling Request: Write %s", complete_path);
 
-  int readen = 0;
   // +1 length for \0.
   request_write_t req_write;
-  readen += read(cfd, &req_write.size, sizeof(req_write.size));
-  readen += read(cfd, &req_write.offset, sizeof(req_write.offset));
+  read(cfd, &req_write, sizeof(request_write_t));
 
-  log_debug("Reading %lu bytes of data (tot %lu)", req_write.size,
-            req_write.size + sizeof(req_write.offset) + sizeof(req_write.size));
   char* data = malloc(req_write.size);
-  readen += read(cfd, data, req_write.size);
-  log_debug("Write: Got data of length %lu at off %lu - read tot %d",
-            req_write.size, req_write.offset, readen);
+  int readB = 0;
+  while (readB  < req_write.size)
+    readB += read(cfd, data + readB, req_write.size - readB);
 
   response_write_t resp_write;
 

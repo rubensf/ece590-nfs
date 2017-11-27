@@ -534,14 +534,12 @@ static int nfs_fuse_write(const char* path,
   make_request(path, NFS_FUSE_REQUEST_WRITE);
 
   size_t tot_req = sizeof(request_write_t) + size;
-  log_debug("Tot req write size: %lu", tot_req);
 
   request_write_t* req_write = malloc(tot_req);
   req_write->size = size;
   req_write->offset = offset;
   memcpy(req_write->data, buf, size);
-  int written = write(sfd, req_write, tot_req);
-  log_debug("wrote tot %d", written);
+  write(sfd, req_write, tot_req);
   free(req_write);
 
   response_write_t resp_write;
