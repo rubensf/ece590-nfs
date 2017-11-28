@@ -1,5 +1,9 @@
 #define FUSE_USE_VERSION 26
 
+#define VM_MAX_READAHEAD 1024
+#define FUSE_MAX_PAGES_PER_REQ 2560
+#define MIN_BUFSIZE 0x101000
+
 #include <fuse.h>
 
 #include <errno.h>

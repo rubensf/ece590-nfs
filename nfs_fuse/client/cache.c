@@ -232,6 +232,8 @@ static int save_error_check(const char* path, off_t offset, size_t size) {
     log_error("Cannot handle data that doesn't fill entire chunks.");
     return -1;
   }
+
+  return 0;
 }
 
 int save_file(const char* path, off_t offset, size_t size,
@@ -285,13 +287,13 @@ int load_file(const char* path, off_t offset, size_t size,
   SHA1(path, strlen(path), sha1_key);
 
   struct stat sb;
-  if (load_stat(path, &sb) != 0) {
-    log_error("Metadata should have been saved first!");
+  if (load_stat(path, &sb) != 0)
     return -1;
-  }
 
-  if (size == 0)
+  if (size == 0) {
+    log_error("Metadata indicated size is 0");
     return 0;
+  }
 
   size_t max_read = NFS_REDIS_MIN(sb.st_size, offset + size);
   log_debug("Current file size: %lu, max read: %lu", sb.st_size, max_read);
