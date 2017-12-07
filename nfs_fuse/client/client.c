@@ -1,9 +1,5 @@
 #define FUSE_USE_VERSION 26
 
-#define VM_MAX_READAHEAD 1024
-#define FUSE_MAX_PAGES_PER_REQ 2560
-#define MIN_BUFSIZE 0x101000
-
 #include <fuse.h>
 
 #include <assert.h>
@@ -40,6 +36,8 @@ static struct options {
 
   int help;
   int debug;
+
+  int reqs;
 } options;
 
 #define OPTION(t, p, b) { t, offsetof(struct options, p), b }
@@ -74,6 +72,7 @@ void make_request(const char* path, int req_type) {
   assert(write(sfd, req, req_size) == req_size);
 
   free(req);
+  options.reqs++;
 }
 
 static int nfs_fuse_create(const char* path,
@@ -155,6 +154,8 @@ static void nfs_fuse_destroy(void* arg) {
   log_trace("Fuse Call: Destroy");
   make_request("", NFS_FUSE_REQUEST_DESTROY);
   close_cache();
+
+  log_info("Did a total of %d requests to server.\n", options.reqs);
   log_trace("End Fuse Call Destroy");
 }
 
@@ -387,7 +388,9 @@ static int nfs_fuse_read(const char* path,
         ret = read_from_requested;
         log_debug("With cache: read %lu", read_from_requested);
       } else {
-        assert(read(sfd, buf, resp_read.size) == resp_read.size);
+        int readB = 0;
+        while (readB < resp_read.size)
+          readB += read(sfd, buf + readB, resp_read.size - readB);
       }
     }
   }
@@ -644,6 +647,8 @@ int main(int argc, char* argv[]) {
     // TODO Print help.
     return 0;
   }
+
+  options.reqs = 0;
 
   return fuse_main(args.argc, args.argv, &nfs_fuse_oper, NULL);
 }
