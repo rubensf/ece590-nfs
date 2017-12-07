@@ -82,13 +82,13 @@ size_t get_chunk_size() {
   return chunk_size;
 }
 
-static int load_error_check(redisReply* reply, size_t expected_size) {
+static int load_error_check(redisReply* reply) {
   if (reply == NULL) {
     log_debug("Key-chunk didn't exist");
     return -1;
-  } else if (reply->type != REDIS_REPLY_STRING || reply->len != expected_size) {
-    log_error("Redis item was modified by outside sources? Reply type: %d, Reply length: %d, expected length: %d",
-              reply->type, reply->len, expected_size);
+  } else if (reply->type != REDIS_REPLY_STRING) {
+    log_error("Redis item was modified by outside sources? Reply type: %d",
+              reply->type);
     return -1;
   }
   return 0;
@@ -116,7 +116,7 @@ static int load_common(const unsigned char* sha1_key,
   log_trace("Reading field %s for key %s", field_name, sha1_key);
   redisReply* reply =
       redisCommand(c, "hget %b %s", sha1_key, SHA_DIGEST_LENGTH, field_name);
-  int ret = load_error_check(reply, out_size);
+  int ret = load_error_check(reply);
   if (ret == 0)
     memcpy(out_data, reply->str + offset, out_size);
   freeReplyObject(reply);

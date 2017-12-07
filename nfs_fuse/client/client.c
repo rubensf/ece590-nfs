@@ -168,7 +168,7 @@ static void* nfs_fuse_init(struct fuse_conn_info* conn) {
                                   LIBSOCKET_IPv4, 0);
   if (sfd < 0) {
     log_fatal("Failed to start fuse connection: %s", strerror(errno));
-    exit(1);
+    return (void*) -1;
   }
   log_trace("Socket up and running");
 
@@ -176,7 +176,7 @@ static void* nfs_fuse_init(struct fuse_conn_info* conn) {
                  options.redis_port,
                  options.cache_chunk_size) == -1) {
     log_fatal("Could not initialize cache.");
-    exit(1);
+    return (void*) -1;
   }
 
   options.cache_chunk_size = get_chunk_size();
@@ -344,9 +344,11 @@ static int nfs_fuse_read(const char* path,
       ret = load_file(path, offset, size, buf);
       if (ret == -1)
         log_error("Failed to read from cache.");
-      else 
+      else
         log_debug("Read %d bytes from cache.", ret);
-    } else {
+    }
+
+    if (ret == -1) {
       size_t cs = options.cache_chunk_size;
       off_t first_off = (offset/cs) * cs;
       off_t final_off =
@@ -424,20 +426,30 @@ static int nfs_fuse_readdir(const char* path,
     return -resp.ret;
   }
 
+  struct timespec curr_time;
+  clock_gettime(CLOCK_REALTIME, &curr_time);
+
   log_debug("We have %d entries on this folder", resp.size);
   size_t i;
   for (i = 0; i < resp.size; i++) {
     response_readdir_entry_t resp_entry;
-    assert(read(sfd, &resp_entry, sizeof(response_readdir_entry_t)) == sizeof(response_readdir_entry_t));
+
+    int readB = 0;
+    while (readB < sizeof(response_readdir_entry_t))
+      readB += read(sfd, ((char*) &resp_entry) + readB, sizeof(response_readdir_entry_t) - readB);
 
     char* name = malloc(resp_entry.name_l + 1);
-    assert(read(sfd, name, resp_entry.name_l) == resp_entry.name_l);
+    readB = 0;
+    while (readB < resp_entry.name_l)
+      readB += read(sfd, name + readB, resp_entry.name_l - readB);
     name[resp_entry.name_l] = '\0';
 
     filler(buf, name, &resp_entry.sb, 0);
     if (cache_enabled &&
-        memcmp(&resp_entry.sb, testblock, sizeof(struct stat)) != 0)
+        memcmp(&resp_entry.sb, testblock, sizeof(struct stat)) != 0) {
+      resp_entry.sb.st_atim = curr_time;
       save_stat(name, &resp_entry.sb);
+    }
 
     free(name);
   }
@@ -581,23 +593,28 @@ static int nfs_fuse_write(const char* path,
       off_t first_off = (offset/cs) * cs;
       off_t final_off = (((offset + resp_write.size - 1)/cs) + 1) * cs;
       size_t tot_read = final_off - first_off;
-      char* newbuf = malloc(tot_read);
 
-      log_debug("Write to cache from %lu to %lu", first_off, final_off);
+      if (tot_read != 0) {
+        char* newbuf = malloc(tot_read);
 
-      // TODO Optmize for writing chunks in the middle...
-      // If the file wasn't on cache to begin with, don't bother populating rn.
-      int act_read = load_file(path, first_off, tot_read, newbuf);
-      if (act_read != -1) {
-        // Hopefull won't leave empty chunks...
-        memcpy(newbuf + offset - first_off, buf, resp_write.size);
+        log_debug("Write to cache from %lu to %lu", first_off, final_off);
 
-        log_debug("Saving stats...");
-        save_stat(path, &resp_write.sb);
-        size_t final_write_size =
-            NFS_CLIENT_MAX(act_read, offset + resp_write.size - first_off);
-        log_debug("Saving file with %lu bytes...", final_write_size);
-        save_file(path, first_off, final_write_size, newbuf);
+        // TODO Optmize for writing chunks in the middle...
+        // If the file wasn't on cache to begin with, don't bother populating rn.
+        int act_read = load_file(path, first_off, tot_read, newbuf);
+        if (act_read != -1) {
+          // Hopefull won't leave empty chunks...
+          memcpy(newbuf + offset - first_off, buf, resp_write.size);
+
+          log_debug("Saving stats...");
+          save_stat(path, &resp_write.sb);
+          size_t final_write_size =
+              NFS_CLIENT_MAX(act_read, offset + resp_write.size - first_off);
+          log_debug("Saving file with %lu bytes...", final_write_size);
+          save_file(path, first_off, final_write_size, newbuf);
+        }
+
+        free(newbuf);
       }
     }
   }
@@ -628,12 +645,16 @@ static struct fuse_operations nfs_fuse_oper = {
   // .flag_nullpath_ok = 1, // Yay file handles.
 };
 
+const char* default_addr = "127.0.0.1";
+const char* default_port = "1111";
+const char* default_redis_addr = "127.0.0.1";
+
 int main(int argc, char* argv[]) {
   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 
-  options.server_addr = strdup("127.0.0.1");
-  options.server_port = strdup("1111");
-  options.redis_addr = strdup("127.0.0.1");
+  options.server_addr = default_addr;
+  options.server_port = default_port;
+  options.redis_addr = default_redis_addr;
   options.redis_port = 6379;
   options.enable_cache = 1;
   options.cache_chunk_size = 4096;
