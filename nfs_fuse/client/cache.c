@@ -22,6 +22,7 @@
 #define NFS_REDIS_STAT_FIELD_NAME "stats"
 
 #define NFS_REDIS_MIN(a, b) ((a) < (b)) ? (a) : (b)
+#define NFS_REDIS_MAX(a, b) ((a) > (b)) ? (a) : (b)
 
 // NOTE This doesn't allow for multiple things using the same "library", so
 // possibly make a cache descriptor.
@@ -304,16 +305,19 @@ int load_file(const char* path, off_t offset, size_t size,
   for (chunk_number = offset/chunk_size;
        chunk_number * chunk_size < max_read;
        chunk_number++) {
-    off_t chk_off =
-        NFS_REDIS_MIN(offset - chunk_number * chunk_size, 0);
+    off_t chk_off = offset - chunk_number * chunk_size;
+    if ((int) chk_off < 0) chk_off = 0;
     size_t chk_end =
         NFS_REDIS_MIN(chunk_size, max_read - chunk_number * chunk_size);
 
     log_debug("Loading chunk number %lu from bytes %lu to %lu",
               chunk_number, chk_off, chk_end);
 
+    if (chk_end - chk_off == 0)
+      continue;
+
     int ret = load_chunk_data(sha1_key, chunk_number, out_data + curr_off_data,
-                              chk_off, chk_end);
+                              chk_off, chk_end - chk_off);
     if (ret != 0) {
       log_error("Failed loading chunk number %lu from bytes %lu to %lu",
                 chunk_number, chk_off, chk_end);

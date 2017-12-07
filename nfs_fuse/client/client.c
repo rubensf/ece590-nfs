@@ -344,6 +344,8 @@ static int nfs_fuse_read(const char* path,
       ret = load_file(path, offset, size, buf);
       if (ret == -1)
         log_error("Failed to read from cache.");
+      else 
+        log_debug("Read %d bytes from cache.", ret);
     } else {
       size_t cs = options.cache_chunk_size;
       off_t first_off = (offset/cs) * cs;
@@ -373,7 +375,10 @@ static int nfs_fuse_read(const char* path,
 
       if (cache_enabled) {
         char* retbuf = malloc(resp_read.size);
-        assert(read(sfd, retbuf, resp_read.size) == resp_read.size);
+        int readB = 0;
+        while (readB < resp_read.size)
+          readB += read(sfd, retbuf + readB, resp_read.size - readB);
+        assert(readB == resp_read.size);
 
         save_file(path, req.offset, resp_read.size, retbuf);
 
@@ -386,11 +391,14 @@ static int nfs_fuse_read(const char* path,
                retbuf + offset - req.offset,
                read_from_requested);
         ret = read_from_requested;
+
+        free(retbuf);
         log_debug("With cache: read %lu", read_from_requested);
       } else {
         int readB = 0;
         while (readB < resp_read.size)
           readB += read(sfd, buf + readB, resp_read.size - readB);
+        assert(readB == resp_read.size);
       }
     }
   }
