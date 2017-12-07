@@ -232,9 +232,10 @@ void handle_request_read(char* complete_path) {
   } else {
     log_debug("File should have %d bytes - trying to read %d at off %d",
         sb.st_size, req_read.size, req_read.offset);
-    if (req_read.offset <= sb.st_size &&
-        req_read.offset + req_read.size > sb.st_size) {
-      req_read.size = sb.st_size - req_read.offset;
+    if (req_read.offset < sb.st_size) {
+      if (req_read.offset + req_read.size > sb.st_size) {
+        req_read.size = sb.st_size - req_read.offset;
+      }
     } else {
       req_read.size = 0;
     }
