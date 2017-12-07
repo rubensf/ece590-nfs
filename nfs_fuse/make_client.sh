@@ -6,4 +6,3 @@ cache="client/cache.h client/cache.c"
 client="client/client.c"
 
 gcc $client $cache $log $headers -lsocket -lcrypto $libfuse $libhiredis -o build/client -O3
-

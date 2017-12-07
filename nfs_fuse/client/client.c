@@ -6,6 +6,7 @@
 
 #include <fuse.h>
 
+#include <assert.h>
 #include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -70,7 +71,7 @@ void make_request(const char* path, int req_type) {
 
   size_t req_size = sizeof(request_t) + path_l;
   log_trace("Sending request of size %d", req_size);
-  write(sfd, req, req_size);
+  assert(write(sfd, req, req_size) == req_size);
 
   free(req);
 }
@@ -84,10 +85,10 @@ static int nfs_fuse_create(const char* path,
 
   request_create_t req;
   req.mode = mode;
-  write(sfd, &req, sizeof(request_create_t));
+  assert(write(sfd, &req, sizeof(request_create_t)) == sizeof(request_create_t));
 
   response_create_t resp;
-  read(sfd, &resp, sizeof(response_create_t));
+  assert(read(sfd, &resp, sizeof(response_create_t)) == sizeof(response_create_t));
 
   int ret = resp.ret;
   if (resp.ret != 0) {
@@ -111,10 +112,10 @@ static int nfs_fuse_chmod(const char* path,
 
   request_chmod_t req_chmod;
   req_chmod.mode = mode;
-  write(sfd, &req_chmod, sizeof(request_chmod_t));
+  assert(write(sfd, &req_chmod, sizeof(request_chmod_t)) == sizeof(request_chmod_t));
 
   response_chmod_t resp;
-  read(sfd, &resp, sizeof(response_chmod_t));
+  assert(read(sfd, &resp, sizeof(response_chmod_t)) == sizeof(response_chmod_t));
   if (resp.ret != 0) {
     log_error("Fuse Chmod for %s failed: %s", path, strerror(resp.ret));
   } else if (cache_enabled &&
@@ -135,10 +136,10 @@ static int nfs_fuse_chown(const char* path,
   request_chown_t req_chown;
   req_chown.uid = uid;
   req_chown.gid = gid;
-  write(sfd, &req_chown, sizeof(request_chown_t));
+  assert(write(sfd, &req_chown, sizeof(request_chown_t)) == sizeof(request_chown_t));
 
   response_chown_t resp;
-  read(sfd, &resp, sizeof(response_chown_t));
+  assert(read(sfd, &resp, sizeof(response_chown_t)) == sizeof(response_chown_t));
   if (resp.ret != 0) {
     log_error("Fuse Chown for %s failed: %s", path, strerror(resp.ret));
   } else if (cache_enabled &&
@@ -195,7 +196,7 @@ static int nfs_fuse_getattr(const char* path,
     make_request(path, NFS_FUSE_REQUEST_GETATTR);
 
     response_getattr_t resp;
-    read(sfd, &resp, sizeof(response_getattr_t));
+    assert(read(sfd, &resp, sizeof(response_getattr_t)) == sizeof(response_getattr_t));
 
     if (resp.ret != 0) {
       ret = -resp.ret;
@@ -203,7 +204,8 @@ static int nfs_fuse_getattr(const char* path,
     } else {
       ret = 0;
       memcpy(stbuf, &resp.sb, sizeof(struct stat));
-      save_stat(path, &resp.sb);
+      if (cache_enabled)
+        save_stat(path, &resp.sb);
     }
   }
 
@@ -219,10 +221,10 @@ static int nfs_fuse_mkdir(const char* path,
 
   request_mkdir_t req_mkdir;
   req_mkdir.mode = mode;
-  write(sfd, &req_mkdir, sizeof(request_mkdir_t));
+  assert(write(sfd, &req_mkdir, sizeof(request_mkdir_t)) == sizeof(request_mkdir_t));
 
   int ret = 0;
-  read(sfd, &ret, sizeof(int));
+  assert(read(sfd, &ret, sizeof(int)) == sizeof(int));
   if (ret != 0) log_error("Fuse Mkdir for %s failed: %s", path, strerror(ret));
 
   log_trace("End Fuse Call Mkdir");
@@ -234,8 +236,8 @@ static int simple_open_request(const char* path, int flags,
   make_request(path, NFS_FUSE_REQUEST_OPEN);
   request_open_t req;
   req.flags = flags;
-  write(sfd, &req, sizeof(request_open_t));
-  read(sfd, resp, sizeof(response_open_t));
+  assert(write(sfd, &req, sizeof(request_open_t)) == sizeof(request_open_t));
+  assert(read(sfd, resp, sizeof(response_open_t)) == sizeof(response_open_t));
   return resp->ret;
 }
 
@@ -305,6 +307,9 @@ static int nfs_fuse_open(const char* path,
       log_error("Fuse Open for %s failed: %s", path, strerror(resp.ret));
       ret = -resp.ret;
     } else if (cache_enabled) {
+      struct timespec curr_time;
+      clock_gettime(CLOCK_REALTIME, &curr_time);
+      resp.sb.st_atim = curr_time;
       save_metadata(path, fi->flags, &resp.sb);
     }
   }
@@ -323,6 +328,7 @@ static int nfs_fuse_read(const char* path,
   int ret = 0;
   int open_flags;
 
+  log_debug("Reading %lu bytes at off %lu", size, offset);
   request_read_t req;
   req.size = size;
   req.offset = offset;
@@ -351,11 +357,12 @@ static int nfs_fuse_read(const char* path,
   }
 
   if (!cache_enabled || ret == -1) {
+    log_debug("Doing requests!! of %lu bytes at off %lu", req.size, req.offset);
     make_request(path, NFS_FUSE_REQUEST_READ);
-    write(sfd, &req, sizeof(request_read_t));
+    assert(write(sfd, &req, sizeof(request_read_t)) == sizeof(request_read_t));
 
     response_read_t resp_read;
-    read(sfd, &resp_read, sizeof(resp_read));
+    assert(read(sfd, &resp_read, sizeof(resp_read)) == sizeof(resp_read));
     if (resp_read.ret != 0) {
       ret = -resp_read.ret;
       log_error("Read for %s failed: %s", path, strerror(errno));
@@ -365,7 +372,7 @@ static int nfs_fuse_read(const char* path,
 
       if (cache_enabled) {
         char* retbuf = malloc(resp_read.size);
-        read(sfd, retbuf, resp_read.size);
+        assert(read(sfd, retbuf, resp_read.size) == resp_read.size);
 
         save_file(path, req.offset, resp_read.size, retbuf);
 
@@ -380,7 +387,7 @@ static int nfs_fuse_read(const char* path,
         ret = read_from_requested;
         log_debug("With cache: read %lu", read_from_requested);
       } else {
-        read(sfd, buf, resp_read.size);
+        assert(read(sfd, buf, resp_read.size) == resp_read.size);
       }
     }
   }
@@ -399,7 +406,7 @@ static int nfs_fuse_readdir(const char* path,
   make_request(path, NFS_FUSE_REQUEST_READDIR);
 
   response_readdir_t resp;
-  read(sfd, &resp, sizeof(response_readdir_t));
+  assert(read(sfd, &resp, sizeof(response_readdir_t)) == sizeof(response_readdir_t));
 
   if (resp.ret != 0) {
     log_error("Read dir for %s failed: %s", path, strerror(resp.ret));
@@ -410,14 +417,15 @@ static int nfs_fuse_readdir(const char* path,
   size_t i;
   for (i = 0; i < resp.size; i++) {
     response_readdir_entry_t resp_entry;
-    read(sfd, &resp_entry, sizeof(response_readdir_entry_t));
+    assert(read(sfd, &resp_entry, sizeof(response_readdir_entry_t)) == sizeof(response_readdir_entry_t));
 
     char* name = malloc(resp_entry.name_l + 1);
-    read(sfd, name, resp_entry.name_l);
+    assert(read(sfd, name, resp_entry.name_l) == resp_entry.name_l);
     name[resp_entry.name_l] = '\0';
 
     filler(buf, name, &resp_entry.sb, 0);
-    if (memcmp(&resp_entry.sb, testblock, sizeof(struct stat)) != 0)
+    if (cache_enabled &&
+        memcmp(&resp_entry.sb, testblock, sizeof(struct stat)) != 0)
       save_stat(name, &resp_entry.sb);
 
     free(name);
@@ -446,7 +454,7 @@ static int nfs_fuse_rmdir(const char* path) {
   make_request(path, NFS_FUSE_REQUEST_RMDIR);
 
   int ret = 0;
-  read(sfd, &ret, sizeof(int));
+  assert(read(sfd, &ret, sizeof(int)) == sizeof(int));
   if (ret != 0) log_error("Rmdir for %s failed: %s", path, strerror(ret));
 
   log_trace("End Fuse Call Rmdir");
@@ -460,7 +468,7 @@ static int nfs_fuse_statfs(const char* path,
   make_request(path, NFS_FUSE_REQUEST_STATVFS);
 
   response_statvfs_t resp;
-  read(sfd, &resp, sizeof(response_statvfs_t));
+  assert(read(sfd, &resp, sizeof(response_statvfs_t)) == sizeof(response_statvfs_t));
   memcpy(stbuf, &resp.sb, sizeof(struct statvfs));
 
   if (resp.ret != 0) log_error("Statfs failed: %s", strerror(resp.ret));
@@ -477,10 +485,10 @@ static int nfs_fuse_truncate(const char* path,
 
   request_truncate_t req_trunc;
   req_trunc.offset = offset;
-  write(sfd, &req_trunc, sizeof(request_truncate_t));
+  assert(write(sfd, &req_trunc, sizeof(request_truncate_t)) == sizeof(request_truncate_t));
 
   response_truncate_t resp;
-  read(sfd, &resp, sizeof(response_truncate_t));
+  assert(read(sfd, &resp, sizeof(response_truncate_t)) == sizeof(response_truncate_t));
   if (resp.ret != 0) {
     log_error("Truncate failed: %s", strerror(resp.ret));
   } else if (cache_enabled &&
@@ -498,7 +506,7 @@ static int nfs_fuse_unlink(const char* path) {
   make_request(path, NFS_FUSE_REQUEST_UNLINK);
 
   int ret = 0;
-  read(sfd, &ret, sizeof(int));
+  assert(read(sfd, &ret, sizeof(int)) == sizeof(int));
   if (ret != 0) {
     log_error("Unlink failed: %s", strerror(ret));
   } else if (cache_enabled) {
@@ -514,10 +522,10 @@ static int nfs_fuse_utimens(const char* path,
   log_trace("Fuse Call: Utimens %s", path);
 
   make_request(path, NFS_FUSE_REQUEST_UTIMENS);
-  write(sfd, tv, 2*sizeof(struct timespec));
+  assert(write(sfd, tv, 2*sizeof(struct timespec)) == 2*sizeof(struct timespec));
 
   response_utimens_t resp;
-  read(sfd, &resp, sizeof(response_utimens_t));
+  assert(read(sfd, &resp, sizeof(response_utimens_t)) == sizeof(response_utimens_t));
   if (resp.ret != 0) {
     log_error("Fuse Utimens for %s failed: %s", path, strerror(resp.ret));
   } else if (cache_enabled &&
@@ -544,11 +552,11 @@ static int nfs_fuse_write(const char* path,
   req_write->size = size;
   req_write->offset = offset;
   memcpy(req_write->data, buf, size);
-  write(sfd, req_write, tot_req);
+  assert(write(sfd, req_write, tot_req) == tot_req);
   free(req_write);
 
   response_write_t resp_write;
-  read(sfd, &resp_write, sizeof(response_write_t));
+  assert(read(sfd, &resp_write, sizeof(response_write_t)) == sizeof(response_write_t));
 
   int ret = 0;
   if (resp_write.ret != 0) {

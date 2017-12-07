@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <errno.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -48,15 +49,15 @@ char* make_complete_path(char* added_path, int len) {
 request_t* read_request(int cfd) {
   // Make sure we have the right types/sizes.
   request_t req;
-  read(cfd, &req.type, sizeof(req.type));
-  read(cfd, &req.path_l, sizeof(req.path_l));
+  assert(read(cfd, &req.type, sizeof(req.type)) == sizeof(req.type));
+  assert(read(cfd, &req.path_l, sizeof(req.path_l)) == sizeof(req.path_l));
 
   // +1 length for \0.
   request_t* req_ptr = malloc(sizeof(request_t) + req.path_l + 1);
   req_ptr->type   = req.type;
   req_ptr->path_l = req.path_l;
 
-  read(cfd, req_ptr->path, req_ptr->path_l);
+  assert(read(cfd, req_ptr->path, req_ptr->path_l) == req_ptr->path_l);
   req_ptr->path[req_ptr->path_l] = '\0';
 
   log_debug("Received Request");
@@ -68,7 +69,7 @@ void handle_request_create(char* complete_path) {
   log_trace("Handling Request: Create %s", complete_path);
 
   request_create_t req_create;
-  read(cfd, &req_create, sizeof(request_create_t));
+  assert(read(cfd, &req_create, sizeof(request_create_t)) == sizeof(request_create_t));
 
   int fd;
   response_create_t resp_create;
@@ -86,7 +87,7 @@ void handle_request_create(char* complete_path) {
   }
   close(fd);
 
-  write(cfd, &resp_create, sizeof(response_open_t));
+  assert(write(cfd, &resp_create, sizeof(response_open_t)) == sizeof(response_open_t));
   log_trace("End Handling Create");
 }
 
@@ -94,7 +95,7 @@ void handle_request_chmod(char* complete_path) {
   log_trace("Handling Request: Chmod %s", complete_path);
 
   request_chmod_t req_mode;
-  read(cfd, &req_mode, sizeof(request_chmod_t));
+  assert(read(cfd, &req_mode, sizeof(request_chmod_t)) == sizeof(request_chmod_t));
 
   response_chmod_t resp;
   memset(&resp.sb, 0, sizeof(struct stat));
@@ -107,7 +108,7 @@ void handle_request_chmod(char* complete_path) {
               complete_path, strerror(errno));
   }
 
-  write(cfd, &resp, sizeof(response_chmod_t));
+  assert(write(cfd, &resp, sizeof(response_chmod_t)) == sizeof(response_chmod_t));
 
   log_trace("End Handling Chmod");
 }
@@ -116,7 +117,7 @@ void handle_request_chown(char* complete_path) {
   log_trace("Handling Request: Chown %s", complete_path);
 
   request_chown_t req_own;
-  read(cfd, &req_own, sizeof(request_chown_t));
+  assert(read(cfd, &req_own, sizeof(request_chown_t)) == sizeof(request_chown_t));
 
   response_chown_t resp;
   memset(&resp.sb, 0, sizeof(struct stat));
@@ -129,7 +130,7 @@ void handle_request_chown(char* complete_path) {
               complete_path, strerror(errno));
   }
 
-  write(cfd, &resp, sizeof(response_chown_t));
+  assert(write(cfd, &resp, sizeof(response_chown_t)) == sizeof(response_chown_t));
 
   log_trace("End Handling Chown");
 }
@@ -158,7 +159,7 @@ void handle_request_getattr(char* complete_path) {
     log_error("Failed to get stat for %s: %s", complete_path, strerror(errno));
   }
 
-  write(cfd, &resp_getattr, sizeof(response_getattr_t));
+  assert(write(cfd, &resp_getattr, sizeof(response_getattr_t)) == sizeof(response_getattr_t));
   log_trace("End Handling GetAttr");
 }
 
@@ -166,14 +167,14 @@ void handle_request_mkdir(char* complete_path) {
   log_trace("Handling Request: Mkdir %s", complete_path);
 
   mode_t mode;
-  read(cfd, &mode, sizeof(mode_t));
+  assert(read(cfd, &mode, sizeof(mode_t)) == sizeof(mode_t));
 
   int ret = mkdir(complete_path, mode);
   if (ret != 0) {
     ret = errno;
     log_error("Failed to mkdir for %s: %s", complete_path, strerror(errno));
   }
-  write(cfd, &ret, sizeof(int));
+  assert(write(cfd, &ret, sizeof(int)) == sizeof(int));
 
   log_trace("End Handling Mkdir");
 }
@@ -182,7 +183,7 @@ void handle_request_open(char* complete_path) {
   log_trace("Handling Request: Open %s", complete_path);
 
   request_open_t req_open;
-  read(cfd, &req_open, sizeof(request_open_t));
+  assert(read(cfd, &req_open, sizeof(request_open_t)) == sizeof(request_open_t));
 
   int fd;
   response_open_t resp_open;
@@ -199,7 +200,7 @@ void handle_request_open(char* complete_path) {
   }
   close(fd);
 
-  write(cfd, &resp_open, sizeof(response_open_t));
+  assert(write(cfd, &resp_open, sizeof(response_open_t)) == sizeof(response_open_t));
   log_trace("End Handling Open");
 }
 
@@ -207,7 +208,7 @@ void handle_request_open(char* complete_path) {
 void handle_request_read(char* complete_path) {
   log_trace("Handling Request: Read %s", complete_path);
   request_read_t req_read;
-  read(cfd, &req_read, sizeof(request_read_t));
+  assert(read(cfd, &req_read, sizeof(request_read_t)) == sizeof(request_read_t));
 
   int open_flags = O_RDONLY;
   int fd = open(complete_path, open_flags);
@@ -216,7 +217,7 @@ void handle_request_read(char* complete_path) {
     response_read_t resp_read;
     resp_read.ret = errno;
     resp_read.size = 0;
-    write(cfd, &resp_read, sizeof(response_read_t));
+    assert(write(cfd, &resp_read, sizeof(response_read_t)) == sizeof(response_read_t));
     return;
   }
 
@@ -226,7 +227,7 @@ void handle_request_read(char* complete_path) {
     response_read_t resp_read;
     resp_read.ret = errno;
     resp_read.size = 0;
-    write(cfd, &resp_read, sizeof(response_read_t));
+    assert(write(cfd, &resp_read, sizeof(response_read_t)) == sizeof(response_read_t));
     return;
   } else {
     log_debug("File should have %d bytes - trying to read %d at off %d",
@@ -251,9 +252,11 @@ void handle_request_read(char* complete_path) {
                 complete_path, resp_read->ret, strerror(errno));
     }
 
-    write(cfd, resp_read, resp_l);
+    log_debug("writing back %lu", resp_l);
+    assert(write(cfd, resp_read, resp_l) == resp_l);
     free(resp_read);
     close(fd);
+    log_debug("done", resp_l);
   }
 
   log_trace("End Handling Read %s", complete_path);
@@ -269,7 +272,7 @@ void handle_request_readdir(char* complete_path) {
   if ((dirp = opendir(complete_path)) == NULL) {
     resp_readdir.ret = ENOENT;
     resp_readdir.size = 0;
-    write(cfd, &resp_readdir, sizeof(response_readdir_t));
+    assert(write(cfd, &resp_readdir, sizeof(response_readdir_t)) == sizeof(response_readdir_t));
     return;
   }
 
@@ -288,7 +291,7 @@ void handle_request_readdir(char* complete_path) {
   if (errno != 0) {
     resp_readdir.ret = errno;
     resp_readdir.size = 0;
-    write(cfd, &resp_readdir, sizeof(response_readdir_t));
+    assert(write(cfd, &resp_readdir, sizeof(response_readdir_t)) == sizeof(response_readdir_t));
     return;
   }
 
@@ -333,7 +336,7 @@ void handle_request_readdir(char* complete_path) {
     ent = (response_readdir_entry_t*) (((char*) ent) + entry_l);
   }
 
-  write(cfd, resp_readdir_ptr, total_resp_size);
+  assert(write(cfd, resp_readdir_ptr, total_resp_size) == total_resp_size);
   free(resp_readdir_ptr);
   closedir(dirp);
 
@@ -345,7 +348,7 @@ void handle_request_release(char* complete_path) {
 
   // Every operation opens the file anyway, so no need to open file here.
   int ret = 0;
-  write(cfd, &ret, sizeof(int));
+  assert(write(cfd, &ret, sizeof(int)) == sizeof(int));
 
   log_trace("End Handling Release");
 }
@@ -358,7 +361,7 @@ void handle_request_rmdir(char* complete_path) {
     log_error("Unable to Rmdir %s: %s", complete_path, strerror(errno));
     ret = errno;
   }
-  write(cfd, &ret, sizeof(int));
+  assert(write(cfd, &ret, sizeof(int)) == sizeof(int));
 
   log_trace("End Handling Rmdir");
 }
@@ -375,7 +378,7 @@ void handle_request_statvfs(char* complete_path) {
   }
 
   log_trace("Got FS of bsize %d", resp.sb.f_bsize);
-  write(cfd, &resp, sizeof(response_statvfs_t));
+  assert(write(cfd, &resp, sizeof(response_statvfs_t)) == sizeof(response_statvfs_t));
 
   log_trace("End Handling StatVFS");
 }
@@ -384,7 +387,7 @@ void handle_request_truncate(char* complete_path) {
   log_trace("Handling Request: Truncate %s", complete_path);
 
   request_truncate_t req_trunc;
-  read(cfd, &req_trunc, sizeof(request_truncate_t));
+  assert(read(cfd, &req_trunc, sizeof(request_truncate_t)) == sizeof(request_truncate_t));
 
   response_truncate_t resp;
   memset(&resp.sb, 0, sizeof(struct stat));
@@ -396,7 +399,7 @@ void handle_request_truncate(char* complete_path) {
     log_error("Couldn't get stats for file %s with: %s",
               complete_path, strerror(errno));
   }
-  write(cfd, &resp, sizeof(response_truncate_t));
+  assert(write(cfd, &resp, sizeof(response_truncate_t)) == sizeof(response_truncate_t));
 
   log_trace("End Handling Truncate");
 }
@@ -409,7 +412,7 @@ void handle_request_unlink(char* complete_path) {
     log_error("Unable to unlink %s: %s", complete_path, strerror(errno));
     ret = errno;
   }
-  write(cfd, &ret, sizeof(int));
+  assert(write(cfd, &ret, sizeof(int)) == sizeof(int));
 
   log_trace("End Handling Unlink");
 }
@@ -418,7 +421,7 @@ void handle_request_utimens(char* complete_path) {
   log_trace("Handling Request: Utimens %s", complete_path);
 
   struct timespec tv[2];
-  read(cfd, &tv, 2*sizeof(struct timespec));
+  assert(read(cfd, &tv, 2*sizeof(struct timespec)) == 2*sizeof(struct timespec));
 
   response_utimens_t resp;
   memset(&resp.sb, 0, sizeof(resp.sb));
@@ -438,7 +441,7 @@ void handle_request_utimens(char* complete_path) {
               complete_path, strerror(errno));
   }
 
-  write(cfd, &resp, sizeof(response_utimens_t));
+  assert(write(cfd, &resp, sizeof(response_utimens_t)) == sizeof(response_utimens_t));
   log_trace("End Handling Utimens");
 }
 
@@ -447,7 +450,7 @@ void handle_request_write(char* complete_path) {
 
   // +1 length for \0.
   request_write_t req_write;
-  read(cfd, &req_write, sizeof(request_write_t));
+  assert(read(cfd, &req_write, sizeof(request_write_t)) == sizeof(request_write_t));
 
   char* data = malloc(req_write.size);
   int readB = 0;
@@ -482,7 +485,7 @@ void handle_request_write(char* complete_path) {
     close(fd);
   }
 
-  write(cfd, &resp_write, sizeof(response_write_t));
+  assert(write(cfd, &resp_write, sizeof(response_write_t)) == sizeof(response_write_t));
 
   free(data);
   log_trace("End Handling Write");
